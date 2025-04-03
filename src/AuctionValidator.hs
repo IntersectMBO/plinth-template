@@ -41,6 +41,7 @@ import PlutusTx.AsData qualified as PlutusTx
 import PlutusTx.Blueprint
 import PlutusTx.Prelude qualified as PlutusTx
 import PlutusTx.Show qualified as PlutusTx
+import PlutusTx.List qualified as List
 
 -- BLOCK1
 -- AuctionValidator.hs
@@ -122,7 +123,7 @@ auctionTypedValidator ::
   ScriptContext ->
   Bool
 auctionTypedValidator params (AuctionDatum highestBid) redeemer ctx@(ScriptContext txInfo _) =
-  PlutusTx.and conditions
+  List.and conditions
   where
     conditions :: [Bool]
     conditions = case redeemer of
@@ -161,7 +162,7 @@ auctionTypedValidator params (AuctionDatum highestBid) redeemer ctx@(ScriptConte
     ~refundsPreviousHighestBid = case highestBid of
       Nothing -> True
       Just (Bid _ bidderPkh amt) ->
-        case PlutusTx.find
+        case List.find
           ( \o ->
               (toPubKeyHash (txOutAddress o) PlutusTx.== Just bidderPkh)
                 PlutusTx.&& (lovelaceValueOf (txOutValue o) PlutusTx.== amt)
@@ -204,7 +205,7 @@ auctionTypedValidator params (AuctionDatum highestBid) redeemer ctx@(ScriptConte
       os ->
         PlutusTx.traceError
           ( "Expected exactly one continuing output, got "
-              PlutusTx.<> PlutusTx.show (PlutusTx.length os)
+              PlutusTx.<> PlutusTx.show (List.length os)
           )
 -- BLOCK7
 -- AuctionValidator.hs
@@ -215,7 +216,7 @@ auctionTypedValidator params (AuctionDatum highestBid) redeemer ctx@(ScriptConte
     ~sellerGetsHighestBid = case highestBid of
       Nothing -> True
       Just bid ->
-        case PlutusTx.find
+        case List.find
           ( \o ->
               (toPubKeyHash (txOutAddress o) PlutusTx.== Just (apSeller params))
                 PlutusTx.&& (lovelaceValueOf (txOutValue o) PlutusTx.== bAmount bid)
@@ -230,7 +231,7 @@ auctionTypedValidator params (AuctionDatum highestBid) redeemer ctx@(ScriptConte
             -- If there are no bids, the asset should go back to the seller
             Nothing  -> apSeller params
             Just bid -> bPkh bid
-       in case PlutusTx.find
+       in case List.find
             ( \o ->
                 (toPubKeyHash (txOutAddress o) PlutusTx.== Just highestBidder)
                   PlutusTx.&& (valueOf (txOutValue o) currencySymbol tokenName PlutusTx.== 1)
