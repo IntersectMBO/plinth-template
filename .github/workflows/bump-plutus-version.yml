@@ -32,7 +32,7 @@ jobs:
   
       - name: Update flake.lock
         run: |
-          nix flake update --accept-flake-config
+          nix flake update CHaP hackage --accept-flake-config
 
       - name: Create Pull Request
         id: cpr
