@@ -1,22 +1,22 @@
-# Plutus Tx Template
+# Plinth Template Repository 
 
-A template repository for your `plutus-tx` smart contract project.
+A template repository for your Plinth smart contract project.
 
-`plutus-tx` currently supports GHC `v9.2.x` and `v9.6.x`. Cabal `v3.8+` is recommended.
+Plinth currently supports GHC `v9.2.x` and `v9.6.x`. Cabal `v3.8+` is recommended.
 
 ### 1. Create the repository
 
 - From the command line:
 
   ```
-  gh repo create my-project --private --template IntersectMBO/plutus-tx-template
+  gh repo create my-project --private --template IntersectMBO/plinth-template
   ```
 
-- Or from the [GitHub web page](https://github.com/IntersectMBO/plutus-tx-template), click the top-right green button:
+- Or from the [GitHub web page](https://github.com/IntersectMBO/plinth-template), click the top-right green button:
 
   `Use this template -> Create new repository`
 
-- Or just fork/clone `plutus-tx-template` (but note that this is a template repository)
+- Or just fork/clone `plinth-template` (but note that this is a template repository)
 
   More information on GitHub template repositories can be found [here](https://docs.github.com/en/repositories/creating-and-managing-repositories/creating-a-repository-from-a-template).
 
@@ -24,7 +24,7 @@ A template repository for your `plutus-tx` smart contract project.
 
 - With Nix (**recommended**)
 
-  Follow [these instructions](https://github.com/input-output-hk/cardano-node-wiki/blob/main/docs/getting-started/install.md) to install and configure nix, even if you already have it installed.
+  Follow [these instructions](https://github.com/input-output-hk/iogx/blob/main/doc/nix-setup-guide.md) to install and configure nix, *even if you already have it installed*.
 
   Then enter the shell using `nix develop`.
 
@@ -32,7 +32,7 @@ A template repository for your `plutus-tx` smart contract project.
 
 - With Docker / Devcontainers / Codespaces
 
-  From the [GitHub web page](https://github.com/IntersectMBO/plutus-tx-template), click the top-right green button:
+  From the [GitHub web page](https://github.com/IntersectMBO/plinth-template), click the top-right green button:
 
   `Use this template -> Open in a codespace`
 
