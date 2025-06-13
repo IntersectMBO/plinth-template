@@ -20,7 +20,6 @@ library scripts
     , base
     , plutus-core ^>=1.47.0.0
     , plutus-ledger-api ^>=1.47.0.0
-    , plutus-metatheory ^>=1.47.0.0
     , plutus-tx ^>=1.47.0.0
 
   if !(impl(ghcjs) || os(ghcjs))
@@ -36,7 +35,6 @@ executable gen-auction-validator-blueprint
     , containers
     , plutus-core ^>=1.47.0.0
     , plutus-ledger-api ^>=1.47.0.0
-    , plutus-metatheory ^>=1.47.0.0
     , plutus-tx ^>=1.47.0.0
     , plutus-tx-plugin ^>=1.47.0.0
     , scripts
@@ -51,7 +49,6 @@ executable gen-minting-policy-blueprint
     , containers
     , plutus-core ^>=1.47.0.0
     , plutus-ledger-api ^>=1.47.0.0
-    , plutus-metatheory ^>=1.47.0.0
     , plutus-tx ^>=1.47.0.0
     , plutus-tx-plugin ^>=1.47.0.0
     , scripts
