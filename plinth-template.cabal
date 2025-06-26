@@ -21,9 +21,7 @@ library scripts
     , plutus-core ^>=1.48.0.0
     , plutus-ledger-api ^>=1.48.0.0
     , plutus-tx ^>=1.48.0.0
-
-  if !(impl(ghcjs) || os(ghcjs))
-    build-depends: plutus-tx-plugin
+    , plutus-tx-plugin ^>=1.48.0.0
 
 executable gen-auction-validator-blueprint
   import:           options
