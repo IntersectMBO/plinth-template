@@ -51,7 +51,7 @@ Plinth currently supports GHC `v9.2.x` and `v9.6.x`. Cabal `v3.8+` is recommende
 
 - With manually-installed dependencies (**not recommended**)
 
-  Follow the instructions for [cardano-node](https://github.com/input-output-hk/cardano-node-wiki/blob/main/docs/getting-started/install.md) for a custom setup.
+  Follow the instructions for [cardano-node](https://developers.cardano.org/docs/get-started/cardano-node/installing-cardano-node/) for a custom setup.
 
   When using this approach, you can ignore/delete/replace the nix files entirely.
 
