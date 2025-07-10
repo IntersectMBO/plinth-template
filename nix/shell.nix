@@ -1,45 +1,105 @@
-# Docs for this file: https://github.com/input-output-hk/iogx/blob/main/doc/api.md#mkhaskellprojectinshellargs
-# See `shellArgs` in `mkHaskellProject` in ./project.nix for more details.
+{ inputs, pkgs, lib, project, utils, ghc }:
 
-{ repoRoot, inputs, pkgs, lib, system }:
+let
 
-# Each flake variant defined in your project.nix project will yield a separate
-# shell. If no flake variants are defined, then cabalProject is the original 
-# project.
-cabalProject:
+  allTools = {
+    "ghc966".cabal                    = project.projectVariants.ghc966.tool "cabal" "latest";
+    "ghc966".cabal-fmt                = project.projectVariants.ghc966.tool "cabal-fmt" "latest";
+    "ghc966".haskell-language-server  = project.projectVariants.ghc966.tool "haskell-language-server" "latest";
+    "ghc966".stylish-haskell          = project.projectVariants.ghc966.tool "stylish-haskell" "latest";
+    "ghc966".fourmolu                 = project.projectVariants.ghc966.tool "fourmolu" "latest";
+    "ghc966".hlint                    = project.projectVariants.ghc966.tool "hlint" "latest";
 
-{
-  name = "plinth-template";
+    "ghc984".cabal                    = project.projectVariants.ghc984.tool "cabal" "latest";
+    "ghc984".cabal-fmt                = project.projectVariants.ghc984.tool "cabal-fmt" "latest";
+    "ghc984".haskell-language-server  = project.projectVariants.ghc984.tool "haskell-language-server" "latest";
+    "ghc984".stylish-haskell          = project.projectVariants.ghc984.tool "stylish-haskell" "latest";
+    "ghc984".fourmolu                 = project.projectVariants.ghc984.tool "fourmolu" "latest";
+    "ghc984".hlint                    = project.projectVariants.ghc984.tool "hlint" "latest";
+  };
 
-  packages = [
+  tools = allTools.${ghc};
+
+  preCommitCheck = inputs.pre-commit-hooks.lib.${pkgs.system}.run {
+
+    src = lib.cleanSources ../.;
+    
+    hooks = {
+      nixpkgs-fmt = {
+        enable = false;
+        package = pkgs.nixpkgs-fmt;
+      };
+      cabal-fmt = {
+        enable = false;
+        package = tools.cabal-fmt;
+      };
+      stylish-haskell = {
+        enable = false;
+        package = tools.stylish-haskell;
+        args = [ "--config" ".stylish-haskell.yaml" ];
+      };
+      fourmolu = {
+        enable = false;
+        package = tools.fourmolu;
+        args = [ "--mode" "inplace" ];
+      };
+      hlint = {
+        enable = false;
+        package = tools.hlint;
+        args = [ "--hint" ".hlint.yaml" ];
+      };
+      shellcheck = {
+        enable = false;
+        package = pkgs.shellcheck;
+      };
+    };
+  };
+
+  linuxPkgs = lib.optionals pkgs.hostPlatform.isLinux [
   ];
 
-  # scripts = {
-  #   foo = {
-  #      description = "";
-  #      group = "general";
-  #      enabled = true;
-  #      exec = ''
-  #        echo "Hello, World!"
-  #      '';
-  #    };
-  # };
+  darwinPkgs = lib.optionals pkgs.hostPlatform.isDarwin [
+  ];
 
-  # env = {
-  #   KEY = "VALUE";
-  # };
+  commonPkgs = [
+    tools.haskell-language-server
+    tools.stylish-haskell
+    tools.fourmolu
+    tools.cabal
+    tools.hlint
+    tools.cabal-fmt
 
-  shellHook = ''
-    # Custom shellHook
-  '';
+    pkgs.shellcheck
+    pkgs.nixpkgs-fmt
+    pkgs.github-cli
+    pkgs.act
+    pkgs.bzip2
+    pkgs.gawk
+    pkgs.zlib
+    pkgs.cacert
+    pkgs.curl
+    pkgs.bash
+    pkgs.git
+    pkgs.which
+  ];
 
-  preCommit = {
-    # cabal-fmt.enable = true;
-    # stylish-haskell.enable = true;
-    # fourmolu.enable = true;
-    # hlint.enable = true;
-    # editorconfig-checker.enable = true;
-    # nixpkgs-fmt.enable = true;
+  shell = project.shellFor {
+    name = "plinth-${project.args.compiler-nix-name}";
+
+    buildInputs = lib.concatLists [
+      commonPkgs
+      darwinPkgs
+      linuxPkgs
+    ];
+
+    withHoogle = true;
+
+    shellHook = ''
+      ${preCommitCheck.shellHook}
+      export PS1="\n\[\033[1;32m\][nix-shell:\w]\$\[\033[0m\] "
+    '';
   };
-}
- 
+
+in
+
+shell
