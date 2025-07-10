@@ -2,7 +2,7 @@
 
 A template repository for your Plinth smart contract project.
 
-Plinth currently supports GHC `v9.2.x` and `v9.6.x`. Cabal `v3.8+` is recommended.
+Plinth currently supports GHC `v9.6.x` and `v9.8.x`. Cabal `v3.8+` is recommended.
 
 ### 1. Create the repository
 
@@ -28,7 +28,7 @@ Plinth currently supports GHC `v9.2.x` and `v9.6.x`. Cabal `v3.8+` is recommende
 
   Then enter the shell using `nix develop`.
 
-  The nix files inside this template follow the [`iogx` flake](https://github.com/input-output-hk/iogx), but you can delete and replace them with your own. In that case, you might want to include the [`devx` flake](https://github.com/input-output-hk/devx/issues) in your flake inputs as a starting point to supply all the necessary dependencies, making sure to use one of the `-iog` flavours.
+  The nix files inside this template follow the [`iogx` template](https://github.com/input-output-hk/iogx), but you can delete and replace them with your own. In that case, you might want to include the [`devx` flake](https://github.com/input-output-hk/devx/issues) in your flake inputs as a starting point to supply all the necessary dependencies, making sure to use one of the `-iog` flavours.
 
 - With Docker / Devcontainers / Codespaces
 
