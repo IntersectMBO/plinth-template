@@ -24,8 +24,6 @@ let
   defaultHydraJobs = { 
     ghc966 = projectFlake.hydraJobs.ghc966;
     ghc984 = projectFlake.hydraJobs.ghc984;
-    ghc9102 = projectFlake.hydraJobs.ghc9102;
-    ghc9122 = projectFlake.hydraJobs.ghc9122;
     inherit packages; 
     inherit devShells;
     required = utils.makeHydraRequiredJob hydraJobs; 
