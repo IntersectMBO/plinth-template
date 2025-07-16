@@ -2,7 +2,7 @@
 
 A template repository for your Plinth smart contract project.
 
-Plinth currently supports GHC `v9.6.x` and `v9.8.x`. Cabal `v3.8+` is recommended.
+Plinth currently supports GHC `v9.6.x`. Cabal `v3.8+` is recommended.
 
 ### 1. Create the repository
 

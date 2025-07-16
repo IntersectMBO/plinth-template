@@ -14,7 +14,6 @@ let
 
       flake.variants = {
         ghc966 = {}; # Alias for the default variant
-        ghc984.compiler-nix-name = "ghc984";
       };
 
       inputMap = { "https://chap.intersectmbo.org/" = inputs.CHaP; };
