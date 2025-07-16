@@ -30,8 +30,8 @@
     flake-utils.url = "github:numtide/flake-utils";
   };
 
-  outputs = inputs: inputs.flake-utils.lib.eachSystem 
-    ["aarch64-darwin" "x86_64-darwin" "x86_64-linux"] 
+  outputs = inputs: inputs.flake-utils.lib.eachDefaultSystem 
+    # ["aarch64-darwin" "x86_64-darwin" "x86_64-linux"] 
     (system: import ./nix/outputs.nix { inherit inputs system; });
 
   nixConfig = {
