@@ -25,6 +25,10 @@ let
     src = lib.cleanSources ../.;
     
     hooks = {
+      shellcheck = {
+        enable = false;
+        package = pkgs.shellcheck;
+      };
       nixpkgs-fmt = {
         enable = false;
         package = pkgs.nixpkgs-fmt;
@@ -47,10 +51,6 @@ let
         enable = false;
         package = tools.hlint;
         args = [ "--hint" ".hlint.yaml" ];
-      };
-      shellcheck = {
-        enable = false;
-        package = pkgs.shellcheck;
       };
     };
   };
