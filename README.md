@@ -30,7 +30,7 @@ Plinth currently supports GHC `v9.6.x`. Cabal `v3.8+` is recommended.
   2. Then enter the shell using `nix develop`.
 
   > NOTE:  
-  > The nix files inside this template follow the [`iogx` template](https://github.com/input-output-hk/iogx), but you can delete and replace them with your own. In that case, you might want to include the [`devx` flake](https://github.com/input-output-hk/devx/issues) in your flake inputs as a starting point to supply all the necessary dependencies, making sure to use one of the `-iog` flavours.
+  > The nix files inside this template follow the [`iogx` template](https://github.com/input-output-hk/iogx), but you can delete and replace them with your own. In that case, you might want to include the [`devx` flake](https://github.com/input-output-hk/devx/issues) in your flake inputs as a starting point to supply all the necessary dependencies, making sure to use one of the `-iog` flavors.
 
   > NOTE (for Windows users):<br>
   > Make sure to have [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install#upgrade-version-from-wsl-1-to-wsl-2) and the [WSL](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-wsl) VSCode extension (if using VSCode) installed before the Nix setup.
@@ -55,8 +55,8 @@ Plinth currently supports GHC `v9.6.x`. Cabal `v3.8+` is recommended.
       -it ghcr.io/input-output-hk/devx-devcontainer:x86_64-linux.ghc96-iog
   ```
 
-   > NOTE:  
-  >You can modify your [`devcontainer.json`](./.devcontainer/devcontainer.json) file to customize the container (more info [here](https://github.com/input-output-hk/devx?tab=readme-ov-file#vscode-devcontainer--github-codespace-support)).
+  > NOTE:
+  > You can modify your [`devcontainer.json`](./.devcontainer/devcontainer.json) file to customize the container (more info [here](https://github.com/input-output-hk/devx?tab=readme-ov-file#vscode-devcontainer--github-codespace-support)).
 
   > NOTE:  
   > When using this approach, you can ignore/delete/replace the Nix files entirely.
