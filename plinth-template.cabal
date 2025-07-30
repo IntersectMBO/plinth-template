@@ -18,10 +18,10 @@ library scripts
 
   build-depends:
     , base
-    , plutus-core ^>=1.50.0.0
-    , plutus-ledger-api ^>=1.50.0.0
-    , plutus-tx ^>=1.50.0.0
-    , plutus-tx-plugin ^>=1.50.0.0
+    , plutus-core ^>=1.51.0.0
+    , plutus-ledger-api ^>=1.51.0.0
+    , plutus-tx ^>=1.51.0.0
+    , plutus-tx-plugin ^>=1.51.0.0
 
 executable gen-auction-validator-blueprint
   import:           options
@@ -31,10 +31,10 @@ executable gen-auction-validator-blueprint
     , base
     , bytestring
     , containers
-    , plutus-core ^>=1.50.0.0
-    , plutus-ledger-api ^>=1.50.0.0
-    , plutus-tx ^>=1.50.0.0
-    , plutus-tx-plugin ^>=1.50.0.0
+    , plutus-core ^>=1.51.0.0
+    , plutus-ledger-api ^>=1.51.0.0
+    , plutus-tx ^>=1.51.0.0
+    , plutus-tx-plugin ^>=1.51.0.0
     , scripts
 
 executable gen-minting-policy-blueprint
@@ -45,8 +45,8 @@ executable gen-minting-policy-blueprint
     , base
     , bytestring
     , containers
-    , plutus-core ^>=1.50.0.0
-    , plutus-ledger-api ^>=1.50.0.0
-    , plutus-tx ^>=1.50.0.0
-    , plutus-tx-plugin ^>=1.50.0.0
+    , plutus-core ^>=1.51.0.0
+    , plutus-ledger-api ^>=1.51.0.0
+    , plutus-tx ^>=1.51.0.0
+    , plutus-tx-plugin ^>=1.51.0.0
     , scripts
