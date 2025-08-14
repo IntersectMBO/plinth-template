@@ -22,13 +22,13 @@
 {-# OPTIONS_GHC -fno-strictness #-}
 {-# OPTIONS_GHC -fno-unbox-small-strict-fields #-}
 {-# OPTIONS_GHC -fno-unbox-strict-fields #-}
-{-# OPTIONS_GHC -fplugin-opt PlutusTx.Plugin:target-version=1.0.0 #-}
+{-# OPTIONS_GHC -fplugin-opt PlutusTx.Plugin:target-version=1.1.0 #-}
 
 module AuctionValidator where
 
 import GHC.Generics (Generic)
 
-import PlutusCore.Version (plcVersion100)
+import PlutusCore.Version (plcVersion110)
 import PlutusLedgerApi.V1 (Lovelace, POSIXTime, PubKeyHash)
 import PlutusLedgerApi.V1.Address (toPubKeyHash)
 import PlutusLedgerApi.V1.Interval (contains)
@@ -263,7 +263,7 @@ auctionValidatorScript ::
   CompiledCode (BuiltinData -> BuiltinData -> BuiltinData -> PlutusTx.BuiltinUnit)
 auctionValidatorScript params =
   $$(PlutusTx.compile [||auctionUntypedValidator||])
-    `PlutusTx.unsafeApplyCode` PlutusTx.liftCode plcVersion100 params
+    `PlutusTx.unsafeApplyCode` PlutusTx.liftCode plcVersion110 params
 
 -- BLOCK9
 -- AuctionValidator.hs
