@@ -17,14 +17,14 @@
 {-# OPTIONS_GHC -fno-strictness #-}
 {-# OPTIONS_GHC -fno-unbox-small-strict-fields #-}
 {-# OPTIONS_GHC -fno-unbox-strict-fields #-}
-{-# OPTIONS_GHC -fplugin-opt PlutusTx.Plugin:target-version=1.0.0 #-}
+{-# OPTIONS_GHC -fplugin-opt PlutusTx.Plugin:target-version=1.1.0 #-}
 
 module AuctionMintingPolicy where
 
-import PlutusCore.Version (plcVersion100)
+import PlutusCore.Version (plcVersion110)
+import PlutusLedgerApi.V3 (PubKeyHash, ScriptContext (..), TxInfo (..), mintValueMinted)
 import PlutusLedgerApi.V1.Value (flattenValue)
-import PlutusLedgerApi.V2 (PubKeyHash, ScriptContext (..), TxInfo (..))
-import PlutusLedgerApi.V2.Contexts (ownCurrencySymbol, txSignedBy)
+import PlutusLedgerApi.V3.Contexts (ownCurrencySymbol, txSignedBy)
 import PlutusTx
 import PlutusTx.Prelude qualified as PlutusTx
 
@@ -42,7 +42,7 @@ auctionTypedMintingPolicy pkh _redeemer ctx =
   txSignedBy txInfo pkh PlutusTx.&& mintedExactlyOneToken
   where
     txInfo = scriptContextTxInfo ctx
-    mintedExactlyOneToken = case flattenValue (txInfoMint txInfo) of
+    mintedExactlyOneToken = case flattenValue (mintValueMinted (txInfoMint txInfo)) of
       [(currencySymbol, _tokenName, quantity)] ->
         currencySymbol PlutusTx.== ownCurrencySymbol ctx PlutusTx.&& quantity PlutusTx.== 1
       _ -> False
@@ -66,4 +66,4 @@ auctionMintingPolicyScript ::
   CompiledCode (BuiltinData -> BuiltinData -> PlutusTx.BuiltinUnit)
 auctionMintingPolicyScript pkh =
   $$(PlutusTx.compile [||auctionUntypedMintingPolicy||])
-    `PlutusTx.unsafeApplyCode` PlutusTx.liftCode plcVersion100 pkh
+    `PlutusTx.unsafeApplyCode` PlutusTx.liftCode plcVersion110 pkh
