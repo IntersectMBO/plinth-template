@@ -31,7 +31,7 @@ import GHC.Generics (Generic)
 import PlutusCore.Version (plcVersion110)
 import PlutusLedgerApi.V3 (CurrencySymbol, Datum (..), Lovelace, OutputDatum (..), 
                            POSIXTime, PubKeyHash, ScriptContext (..), TokenName, TxInfo (..), 
-                           TxOut (..), from, to)
+                           TxOut (..), from, to, ScriptInfo (..), Redeemer (..), getRedeemer)
 import PlutusLedgerApi.V3.Contexts (getContinuingOutputs)
 import PlutusLedgerApi.V1.Address (toPubKeyHash)
 import PlutusLedgerApi.V1.Interval (contains)
@@ -114,17 +114,30 @@ PlutusTx.makeIsDataSchemaIndexed ''AuctionRedeemer [('NewBid, 0), ('Payout, 1)]
 {-# INLINEABLE auctionTypedValidator #-}
 
 {- | Given the auction parameters, determines whether the transaction is allowed to
-spend the UTXO.
+spend the UTXO. V3 validator extracts datum and redeemer from ScriptContext.
 -}
 auctionTypedValidator ::
   AuctionParams ->
-  AuctionDatum ->
-  AuctionRedeemer ->
   ScriptContext ->
   Bool
-auctionTypedValidator params (AuctionDatum highestBid) redeemer ctx@(ScriptContext txInfo _ _) =
+auctionTypedValidator params ctx@(ScriptContext txInfo scriptRedeemer scriptInfo) =
   List.and conditions
   where
+    -- Extract redeemer from script context
+    redeemer :: AuctionRedeemer
+    redeemer = case PlutusTx.fromBuiltinData (getRedeemer scriptRedeemer) of
+      Nothing -> PlutusTx.traceError "Failed to parse AuctionRedeemer"
+      Just r  -> r
+      
+    -- Extract datum from script context  
+    highestBid :: Maybe Bid
+    highestBid = case scriptInfo of
+      SpendingScript _ (Just (Datum datum)) -> 
+        case PlutusTx.fromBuiltinData datum of
+          Just (AuctionDatum bid) -> bid
+          Nothing -> PlutusTx.traceError "Failed to parse AuctionDatum"
+      _ -> PlutusTx.traceError "Expected SpendingScript with datum"
+      
     conditions :: [Bool]
     conditions = case redeemer of
       NewBid bid ->
@@ -246,21 +259,17 @@ auctionTypedValidator params (AuctionDatum highestBid) redeemer ctx@(ScriptConte
 auctionUntypedValidator ::
   AuctionParams ->
   BuiltinData ->
-  BuiltinData ->
-  BuiltinData ->
   PlutusTx.BuiltinUnit
-auctionUntypedValidator params datum redeemer ctx =
+auctionUntypedValidator params ctx =
   PlutusTx.check
     ( auctionTypedValidator
         params
-        (PlutusTx.unsafeFromBuiltinData datum)
-        (PlutusTx.unsafeFromBuiltinData redeemer)
         (PlutusTx.unsafeFromBuiltinData ctx)
     )
 
 auctionValidatorScript ::
   AuctionParams ->
-  CompiledCode (BuiltinData -> BuiltinData -> BuiltinData -> PlutusTx.BuiltinUnit)
+  CompiledCode (BuiltinData -> PlutusTx.BuiltinUnit)
 auctionValidatorScript params =
   $$(PlutusTx.compile [||auctionUntypedValidator||])
     `PlutusTx.unsafeApplyCode` PlutusTx.liftCode plcVersion110 params
