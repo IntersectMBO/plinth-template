@@ -28,7 +28,6 @@ import PlutusLedgerApi.V3.Contexts (ownCurrencySymbol, txSignedBy)
 import PlutusTx
 import PlutusTx.Prelude qualified as PlutusTx
 
--- BLOCK1
 type AuctionMintingParams = PubKeyHash
 type AuctionMintingRedeemer = ()
 
@@ -45,7 +44,6 @@ auctionTypedMintingPolicy pkh ctx@(ScriptContext txInfo _ _) =
       [(currencySymbol, _tokenName, quantity)] ->
         currencySymbol PlutusTx.== ownCurrencySymbol ctx PlutusTx.&& quantity PlutusTx.== 1
       _ -> False
--- BLOCK2
 
 auctionUntypedMintingPolicy ::
   AuctionMintingParams ->
