@@ -13,7 +13,7 @@ index-state:
   -- Bump both the following dates if you need newer packages from Hackage
   , hackage.haskell.org 2025-09-22T12:53:02Z
   -- Bump this if you need newer packages from CHaP
-  , cardano-haskell-packages 2025-09-22T13:23:02Z
+  , cardano-haskell-packages 2025-09-22T06:47:49Z
 
 packages:
   ./.
