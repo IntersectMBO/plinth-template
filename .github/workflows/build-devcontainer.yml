@@ -20,4 +20,4 @@ jobs:
             -v ./.:/workspaces/plinth-template \
             -w /workspaces/plinth-template \
             -i ghcr.io/input-output-hk/devx-devcontainer:x86_64-linux.ghc96-iog \
-            bash -ic "cabal update && cabal build all" 
+            bash -ic "cabal update && cabal build all && echo ':q' | cabal repl lib:plinth-validators" 
