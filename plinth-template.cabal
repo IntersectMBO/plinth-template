@@ -49,10 +49,10 @@ common plinth-options
 
 common plutus-deps
   build-depends:
-    , plutus-core        ^>=1.54.0.0
-    , plutus-ledger-api  ^>=1.54.0.0
-    , plutus-tx          ^>=1.54.0.0
-    , plutus-tx-plugin   ^>=1.54.0.0
+    , plutus-core ^>=1.55.0.0
+    , plutus-ledger-api ^>=1.55.0.0
+    , plutus-tx ^>=1.55.0.0
+    , plutus-tx-plugin ^>=1.55.0.0
 
 library plinth-validators
   import:          plinth-options, plutus-deps
