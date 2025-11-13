@@ -15,11 +15,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4.1.1
 
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+      
+      - name: Install Cabal 
+        run: | 
+          nix profile install nixpkgs#cabal-install
+
       - name: Change Plutus Versions
         run: |
-          CURRENT_DATE=$(date +"%Y-%m-%dT%H:%M:%SZ")
-          sed -i "s/\(hackage.haskell.org \).*\$/\1$CURRENT_DATE/" cabal.project
-          sed -i "s/\(cardano-haskell-packages \).*\$/\1$CURRENT_DATE/" cabal.project
+          HACKAGE_DATE=$(cabal update --dry-run | grep 'index-state' | awk '{print $6}' | tr -d '.' | sed -n '1p')
+          CHAP_DATE=$(cabal update --dry-run | grep 'index-state' | awk '{print $6}' | tr -d '.' | sed -n '2p') 
+          
+          sed -i "s/\(hackage.haskell.org \).*\$/\1$HACKAGE_DATE/" cabal.project
+          sed -i "s/\(cardano-haskell-packages \).*\$/\1$CHAP_DATE/" cabal.project
           
           PLUTUS_VERSION=${{ github.event.inputs.version }}
           sed -i "s/\(plutus-core \).*\$/\1\^>=$PLUTUS_VERSION/" "plinth-template.cabal"
@@ -27,9 +36,6 @@ jobs:
           sed -i "s/\(plutus-tx \).*\$/\1\^>=$PLUTUS_VERSION/" "plinth-template.cabal"
           sed -i "s/\(plutus-tx-plugin \).*\$/\1\^>=$PLUTUS_VERSION/" "plinth-template.cabal"
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@main
-  
       - name: Update flake.lock
         run: |
           nix flake update CHaP hackage --accept-flake-config
@@ -52,3 +58,4 @@ jobs:
           merge-method: squash
           token: ${{ secrets.GITHUB_TOKEN }}
     
+
