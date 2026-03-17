@@ -17,28 +17,35 @@ jobs:
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main
-      
-      - name: Install Cabal 
-        run: | 
-          nix profile install nixpkgs#cabal-install
-
-      - name: Change Plutus Versions
-        run: |
-          HACKAGE_DATE=$(cabal update --dry-run | grep 'index-state' | awk '{print $6}' | tr -d '.' | sed -n '1p')
-          CHAP_DATE=$(cabal update --dry-run | grep 'index-state' | awk '{print $6}' | tr -d '.' | sed -n '2p') 
-          
-          sed -i "s/\(hackage.haskell.org \).*\$/\1$HACKAGE_DATE/" cabal.project
-          sed -i "s/\(cardano-haskell-packages \).*\$/\1$CHAP_DATE/" cabal.project
-          
-          PLUTUS_VERSION=${{ github.event.inputs.version }}
-          sed -i "s/\(plutus-core \).*\$/\1\^>=$PLUTUS_VERSION/" "plinth-template.cabal"
-          sed -i "s/\(plutus-ledger-api \).*\$/\1\^>=$PLUTUS_VERSION/" "plinth-template.cabal"
-          sed -i "s/\(plutus-tx \).*\$/\1\^>=$PLUTUS_VERSION/" "plinth-template.cabal"
-          sed -i "s/\(plutus-tx-plugin \).*\$/\1\^>=$PLUTUS_VERSION/" "plinth-template.cabal"
 
       - name: Update flake.lock
         run: |
           nix flake update CHaP hackage --accept-flake-config
+
+      - name: Change Plutus Versions
+        run: |
+          # Derive index-state timestamps from the flake-pinned sources to avoid
+          # race conditions where cabal update --dry-run reports a newer timestamp
+          # than what is available in the pinned CHaP/hackage repos.
+          HACKAGE_EPOCH=$(jq '.nodes.hackage.locked.lastModified' flake.lock)
+          CHAP_EPOCH=$(jq '.nodes.CHaP.locked.lastModified' flake.lock)
+
+          # Subtract 2 hours as a safety margin: the git commit timestamp can be
+          # newer than the latest index entry in the repository.
+          HACKAGE_EPOCH=$((HACKAGE_EPOCH - 7200))
+          CHAP_EPOCH=$((CHAP_EPOCH - 7200))
+
+          HACKAGE_DATE=$(date -u -d "@$HACKAGE_EPOCH" +"%Y-%m-%dT%H:%M:%SZ")
+          CHAP_DATE=$(date -u -d "@$CHAP_EPOCH" +"%Y-%m-%dT%H:%M:%SZ")
+
+          sed -i "s/\(hackage.haskell.org \).*$/\1$HACKAGE_DATE/" cabal.project
+          sed -i "s/\(cardano-haskell-packages \).*$/\1$CHAP_DATE/" cabal.project
+
+          PLUTUS_VERSION=${{ github.event.inputs.version }}
+          sed -i "s/\(plutus-core \).*$/\1\^>=$PLUTUS_VERSION/" "plinth-template.cabal"
+          sed -i "s/\(plutus-ledger-api \).*$/\1\^>=$PLUTUS_VERSION/" "plinth-template.cabal"
+          sed -i "s/\(plutus-tx \).*$/\1\^>=$PLUTUS_VERSION/" "plinth-template.cabal"
+          sed -i "s/\(plutus-tx-plugin \).*$/\1\^>=$PLUTUS_VERSION/" "plinth-template.cabal"
 
       - name: Create Pull Request
         id: cpr
