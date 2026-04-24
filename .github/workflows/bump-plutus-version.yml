@@ -24,24 +24,26 @@ jobs:
 
       - name: Change Plutus Versions
         run: |
-          # Derive index-state timestamps from the flake-pinned sources to avoid
-          # race conditions where cabal update --dry-run reports a newer timestamp
-          # than what is available in the pinned CHaP/hackage repos.
+          PLUTUS_VERSION=${{ github.event.inputs.version }}
+
+          # Derive hackage index-state from the flake-pinned hackage commit,
+          # subtracting 2 hours as safety margin (commit timestamp > latest index entry).
           HACKAGE_EPOCH=$(jq '.nodes.hackage.locked.lastModified' flake.lock)
-          CHAP_EPOCH=$(jq '.nodes.CHaP.locked.lastModified' flake.lock)
-
-          # Subtract 2 hours as a safety margin: the git commit timestamp can be
-          # newer than the latest index entry in the repository.
           HACKAGE_EPOCH=$((HACKAGE_EPOCH - 7200))
-          CHAP_EPOCH=$((CHAP_EPOCH - 7200))
-
           HACKAGE_DATE=$(date -u -d "@$HACKAGE_EPOCH" +"%Y-%m-%dT%H:%M:%SZ")
-          CHAP_DATE=$(date -u -d "@$CHAP_EPOCH" +"%Y-%m-%dT%H:%M:%SZ")
+
+          # For CHaP, use the foliage timestamp of the specific plutus-core version
+          # being bumped. This is the exact index-state at which the package appears
+          # in the CHaP index — independent of CHaP's git commit timestamp, which can
+          # be arbitrarily newer (e.g. ghost automation re-runs with 0 file changes).
+          CHAP_REV=$(jq -r '.nodes.CHaP.locked.rev' flake.lock)
+          CHAP_DATE=$(gh api \
+            "repos/IntersectMBO/cardano-haskell-packages/contents/_sources/plutus-core/${PLUTUS_VERSION}/meta.toml?ref=${CHAP_REV}" \
+            --jq '.content' | base64 -d | grep '^timestamp' | awk '{print $3}' | tr -d '"')
 
           sed -i "s/\(hackage.haskell.org \).*$/\1$HACKAGE_DATE/" cabal.project
           sed -i "s/\(cardano-haskell-packages \).*$/\1$CHAP_DATE/" cabal.project
 
-          PLUTUS_VERSION=${{ github.event.inputs.version }}
           sed -i "s/\(plutus-core \).*$/\1\^>=$PLUTUS_VERSION/" "plinth-template.cabal"
           sed -i "s/\(plutus-ledger-api \).*$/\1\^>=$PLUTUS_VERSION/" "plinth-template.cabal"
           sed -i "s/\(plutus-tx \).*$/\1\^>=$PLUTUS_VERSION/" "plinth-template.cabal"
