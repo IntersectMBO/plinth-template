@@ -15,5 +15,11 @@ index-state:
   -- Bump this if you need newer packages from CHaP
   , cardano-haskell-packages 2026-04-24T12:33:57Z
 
+-- alfred-margaret-2.1.1.0 accidentally dropped `import Data.Foldable (foldl')`
+-- causing build failures on aarch64 with GHC 9.6. Remove once upstream is fixed.
+-- See: https://github.com/channable/alfred-margaret/pull/76
+constraints:
+  alfred-margaret < 2.1.1.0
+
 packages:
   ./.
