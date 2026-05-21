@@ -7,6 +7,10 @@ on:
         description: plutus Release Version (e.g. 1.26.0.0)
         required: true
 
+permissions:
+  contents: write
+  pull-requests: write
+
 jobs:
   bump-plutus-version:
     name: Bump Plutus Version
