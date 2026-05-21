@@ -17,3 +17,8 @@ index-state:
 
 packages:
   ./.
+
+constraints:
+  -- alfred-margaret 2.1.1.0 fails to build on GHC 9.6 (uses foldl' without
+  -- importing it; Prelude only re-exports it from base 4.20 / GHC 9.10).
+  alfred-margaret < 2.1.1.0
