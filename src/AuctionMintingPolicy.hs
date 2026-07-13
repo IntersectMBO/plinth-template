@@ -1,8 +1,7 @@
 module AuctionMintingPolicy where
 
 import PlutusCore.Version (plcVersion110)
-import PlutusLedgerApi.V3 (PubKeyHash, ScriptContext (..), TxInfo (..), mintValueMinted)
-import PlutusLedgerApi.V1.Value (flattenValue)
+import PlutusLedgerApi.V3 (PubKeyHash, ScriptContext (..), TxInfo (..), flattenValue, mintValueMinted)
 import PlutusLedgerApi.V3.Contexts (ownCurrencySymbol, txSignedBy)
 import PlutusTx
 import PlutusTx.Prelude qualified as PlutusTx
