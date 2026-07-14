@@ -28,6 +28,8 @@ jobs:
 
       - name: Change Plutus Versions
         run: |
+          set -o pipefail
+
           PLUTUS_VERSION=${{ github.event.inputs.version }}
 
           # Derive hackage index-state from the flake-pinned hackage commit,
@@ -36,14 +38,22 @@ jobs:
           HACKAGE_EPOCH=$((HACKAGE_EPOCH - 7200))
           HACKAGE_DATE=$(date -u -d "@$HACKAGE_EPOCH" +"%Y-%m-%dT%H:%M:%SZ")
 
-          # For CHaP, use the foliage timestamp of the specific plutus-core version
-          # being bumped. This is the exact index-state at which the package appears
-          # in the CHaP index — independent of CHaP's git commit timestamp, which can
-          # be arbitrarily newer (e.g. ghost automation re-runs with 0 file changes).
+          # For CHaP, read the index that ships inside the flake-pinned repository:
+          # the mtimes of the entries in 01-index.tar.gz ARE the index-states, so
+          # the newest one is the exact latest index-state of the pinned CHaP —
+          # independent of CHaP's git commit timestamp, which can be arbitrarily
+          # newer (e.g. ghost automation re-runs with 0 file changes).
           CHAP_REV=$(jq -r '.nodes.CHaP.locked.rev' flake.lock)
-          CHAP_DATE=$(gh api \
-            "repos/IntersectMBO/cardano-haskell-packages/contents/_sources/plutus-core/${PLUTUS_VERSION}/meta.toml?ref=${CHAP_REV}" \
-            --jq '.content' | base64 -d | grep '^timestamp' | awk '{print $3}' | tr -d '"')
+          CHAP_DATE=$(curl -fsSL \
+            "https://raw.githubusercontent.com/IntersectMBO/cardano-haskell-packages/${CHAP_REV}/01-index.tar.gz" \
+            | tar -tvz --full-time -f - \
+            | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}' \
+            | sort | tail -1 | sed 's/ /T/;s/$/Z/')
+
+          if [ -z "$CHAP_DATE" ]; then
+            echo "Failed to determine CHaP index-state" >&2
+            exit 1
+          fi
 
           sed -i "s/\(hackage.haskell.org \).*$/\1$HACKAGE_DATE/" cabal.project
           sed -i "s/\(cardano-haskell-packages \).*$/\1$CHAP_DATE/" cabal.project
