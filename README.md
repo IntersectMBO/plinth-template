@@ -1,94 +1,76 @@
-# Plinth Template Repository 
+# Plinth Template
 
-A template repository for your Plinth smart contract project.
+Start a new [Plinth](https://plutus.cardano.intersectmbo.org/docs/) smart
+contract project with one command:
 
-Plinth currently supports GHC `v9.6.x`. Cabal `v3.8+` is recommended.
+```
+curl -fsSL https://raw.githubusercontent.com/IntersectMBO/plinth-template/main/install.sh | sh
+```
 
-### 1. Create the repository
+The installer asks which development environment you want, checks that the
+required tools are installed, explains what is needed (in particular the
+Cardano crypto C libraries), and creates a fresh project folder — named after
+your project (default: `my-plinth-project`) — containing just the files that
+environment needs:
 
-- From the command line:
+| Environment  | What you need locally                       | Project contains              |
+| ------------ | ------------------------------------------- | ----------------------------- |
+| Nix          | nix (crypto libs provided by the shell)     | sources + nix files           |
+| Docker       | docker or a browser (Codespaces)            | sources + .devcontainer       |
+| Demeter      | just a browser (hosted; nix inside)         | sources + nix files           |
+| GHC + Cabal  | ghcup with GHC 9.6/9.12, cabal, pkg-config  | sources + crypto-libs scripts |
+
+Each project comes with a README covering just that setup. You can also skip
+the installer entirely and clone this repository directly — it carries the
+union of all environments, and every setup works from it as-is.
+
+Whatever you pick, the first thing to run inside the project (and its
+environment) is `cabal build all`, which compiles the example auction
+validator.
+
+## About the crypto C libraries
+
+Plinth projects depend — via `plutus-core` and `cardano-crypto-class` — on
+three C libraries: `libsodium` (VRF-patched), `libsecp256k1` and `libblst`.
+The Nix shell, the Docker image and Demeter workspaces provide them (via
+nix). GHC+Cabal projects instead download IOG's prebuilt, checksum- and
+commit-pinned binaries from
+[iohk-nix releases](https://github.com/input-output-hk/iohk-nix/releases)
+on first build into a per-user cache (`~/.cache/plinth-crypto-libs`), linked
+into the project at `dist-newstyle/crypto-libs/` — nothing is installed
+system-wide; see [scripts/get-crypto-libs.sh](scripts/get-crypto-libs.sh)
+(`--prefix` installs them system-wide instead) and the GHC+Cabal README
+([dev/readmes/ghc-cabal.md](dev/readmes/ghc-cabal.md)).
+
+## Repository layout — for maintainers
+
+This single branch carries the union of every environment's files plus the
+machinery around it; `install.sh` selects the relevant subset when creating a
+project (see `include_file` and the marked blocks in `cabal.project` and
+`nix/project.nix` it transforms):
+
+- [install.sh](install.sh) — the installer served over curl. `--from DIR`
+  installs from a local checkout (offline/CI); `--yes --env ...` runs it
+  non-interactively.
+- [scripts/](scripts) — the crypto-libs bootstrap that ships with GHC+Cabal
+  projects ([get-crypto-libs.sh](scripts/get-crypto-libs.sh) and the
+  [pkg-config shim](scripts/pkg-config)).
+- [dev/readmes/](dev/readmes) — the per-environment READMEs the installer
+  places into new projects.
+- [dev/ci/](dev/ci) — the test suite. Every GitHub workflow is a thin
+  wrapper around one of these scripts, so everything can be run locally:
 
   ```
-  gh repo create my-project --private --template IntersectMBO/plinth-template
+  dev/ci/run-all-local.sh                     # everything
+  PLINTH_SKIP_HEAVY=1 dev/ci/run-all-local.sh # fast checks only
   ```
 
-- Or from the [GitHub web page](https://github.com/IntersectMBO/plinth-template), click the top-right green button:
-
-  `Use this template -> Create new repository`
-
-- Or just fork/clone `plinth-template` (but note that this is a template repository)
-
-  More information on GitHub template repositories can be found [here](https://docs.github.com/en/repositories/creating-and-managing-repositories/creating-a-repository-from-a-template).
-
-### 2. Setup your development environment
-
-<details>
-  <summary> With Nix (<b>recommended</b>) </summary>
-
-  1. Follow [these instructions](https://github.com/input-output-hk/iogx/blob/main/doc/nix-setup-guide.md) to install and configure nix, <b>even if you already have it installed</b>.
-     
-  2. Then enter the shell using `nix develop`.
-
-  > NOTE:  
-  > The nix files inside this template follow the [`iogx` template](https://github.com/input-output-hk/iogx), but you can delete and replace them with your own. In that case, you might want to include the [`devx` flake](https://github.com/input-output-hk/devx/issues) in your flake inputs as a starting point to supply all the necessary dependencies, making sure to use one of the `-iog` flavors.
-
-  > NOTE (for Windows users):<br>
-  > Make sure to have [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install#upgrade-version-from-wsl-1-to-wsl-2) and the [WSL](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-wsl) VSCode extension (if using VSCode) installed before the Nix setup.
-</details>
-
-<details>
-  <summary> With Docker / Devcontainer / Codespaces </summary>
-  
-  - **Docker + Codespaces:** From the [GitHub web page](https://github.com/IntersectMBO/plinth-template), click the top-right green button:
-
-    `Use this template -> Open in a codespace`
-
-  - **Docker + Devcontainer:**
-    1. Make sure to have [VSCode](https://code.visualstudio.com/) installed with the [Dev Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) extension.
-    2. Open this project in VSCode and let it create a local codespace for you (See Dev Containers instructions, if needed).
-
-  - **Stand-alone Docker:** Change the `/path/to/my-project` accordingly and run:
-
-  ```
-    docker run \
-      -v /path/to/my-project:/workspaces/my-project \
-      -it ghcr.io/input-output-hk/devx-devcontainer:x86_64-linux.ghc96-iog
-  ```
-
-  > NOTE:
-  > You can modify your [`devcontainer.json`](./.devcontainer/devcontainer.json) file to customize the container (more info [here](https://github.com/input-output-hk/devx?tab=readme-ov-file#vscode-devcontainer--github-codespace-support)).
-
-  > NOTE:  
-  > When using this approach, you can ignore/delete/replace the Nix files entirely.
-
-  > NOTE (for Windows users):<br>
-  > It is recommended to install and run Docker on your native OS. If you want to run Docker Desktop inside a VM, read through [these notes](https://docs.docker.com/desktop/setup/vm-vdi/).
-</details>
-
-<details>
-  <summary> With Demeter </summary>
-  
-  1. Create an account in [Demeter](https://demeter.run/).
-  
-  2. Follow [their instructions](https://docs.demeter.run/guides/getting-started) to setup a remote development environment.
-
-  > IMPORTANT:  
-  > Demeter uses its own infrastructure and packages. If something is not working correctly, please contact them before creating an issue.
-
-  > NOTE:  
-  > When using this approach, you can ignore/delete/replace the Nix files entirely.
-</details>
-
-<details>
-  <summary> With manually-installed dependencies (<b>not recommended</b>) </summary>
-  <br>
-  
-  Follow the instructions for [cardano-node](https://developers.cardano.org/docs/get-started/cardano-node/installing-cardano-node/) for a custom setup.
-
-  > NOTE:  
-  > When using this approach, you can ignore/delete/replace the Nix files entirely.
-</details>
-
-### 3. Run the example application
-
-Run `cabal update` first, then read [Example: An Auction Smart Contract](https://plutus.cardano.intersectmbo.org/docs/category/example-an-auction-smart-contract) to get started.
+  | Script                     | Checks                                              | Workflow               |
+  | -------------------------- | --------------------------------------------------- | ---------------------- |
+  | `lint.sh`                  | shellcheck + syntax over all shell scripts          | `ci.yml`               |
+  | `test-install.sh`          | install.sh end-to-end: exact per-env manifests,     | `ci.yml`               |
+  |                            | transforms, failure modes, real crypto download     |                        |
+  | `build-ghc-cabal.sh`       | full build of an installed GHC+Cabal project        | `build-ghc-cabal.yml` |
+  | `build-nix.sh`             | full build of an installed Nix project (= Demeter)  | `build-nix.yml`       |
+  | `build-docker.sh`          | full build inside the devx devcontainer image       | `build-docker.yml`    |
+  | `test-blueprint-parity.sh` | blueprint byte-parity between ghcup and nix         | (manual)               |
