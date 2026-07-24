@@ -1,0 +1,55 @@
+#!/bin/sh
+#
+# pkg-config wrapper for plinth-template. cabal is pointed at it by
+# cabal.project (solver) and cabal.project.local (package configure, written
+# by get-crypto-libs.sh). It runs scripts/get-crypto-libs.sh — which downloads
+# IOG's prebuilt libsodium/libsecp256k1/libblst into dist-newstyle/crypto-libs/
+# on first use and is a fast no-op afterwards — and then answers the query
+# with the real pkg-config, restricted to the downloaded libraries.
+#
+# Inside nix (IN_NIX_SHELL / NIX_BUILD_TOP) or when
+# PLINTH_USE_SYSTEM_CRYPTO_LIBS=1, it delegates to the real pkg-config
+# untouched and downloads nothing. When cross compiling, set
+# PLINTH_CRYPTO_LIBS_PLATFORM to the target platform (arm64-macos,
+# x86_64-macos or debian).
+
+set -eu
+
+script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+root=$(CDPATH='' cd -- "$script_dir/.." && pwd)
+
+real=$(
+  IFS=:
+  for d in $PATH; do
+    [ -x "$d/pkg-config" ] && [ "$d/pkg-config" != "$script_dir/pkg-config" ] \
+      && { printf '%s\n' "$d/pkg-config"; break; }
+  done
+  # keep the subshell's status 0: under set -e a failed final test would
+  # otherwise kill the shim before the diagnostic below can print
+  :
+)
+if [ -z "$real" ]; then
+  echo "scripts/pkg-config: no real pkg-config found on PATH (install it, e.g. brew install pkgconf / apt install pkg-config)" >&2
+  exit 1
+fi
+
+if [ "${PLINTH_USE_SYSTEM_CRYPTO_LIBS:-0}" = 1 ] \
+   || [ -n "${IN_NIX_SHELL:-}" ] || [ -n "${NIX_BUILD_TOP:-}" ]; then
+  exec "$real" "$@"
+fi
+
+platform="${PLINTH_CRYPTO_LIBS_PLATFORM:-}"
+if [ -z "$platform" ]; then
+  case "$(uname -s)-$(uname -m)" in
+    Darwin-arm64)  platform=arm64-macos ;;
+    Darwin-x86_64) platform=x86_64-macos ;;
+    Linux-*)       platform=debian ;;
+    *) echo "scripts/pkg-config: cannot detect platform; set PLINTH_CRYPTO_LIBS_PLATFORM" >&2; exit 1 ;;
+  esac
+fi
+
+# stdout must carry only query results; the installer's output goes to stderr.
+"$script_dir/get-crypto-libs.sh" --quiet --platform "$platform" 1>&2
+
+PKG_CONFIG_LIBDIR="$root/dist-newstyle/crypto-libs/$platform/lib/pkgconfig" \
+  exec "$real" "$@"

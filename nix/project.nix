@@ -8,12 +8,26 @@ let
     {
       name = "my-project";
 
-      compiler-nix-name = lib.mkDefault "ghc966";
+      compiler-nix-name = lib.mkDefault "ghc967";
 
-      src = lib.cleanSource ../.;
+      # BEGIN union source only
+      # (install.sh replaces this whole block with a plain
+      # `src = lib.cleanSource ../.;` for Nix/Demeter projects, which carry
+      # neither the pkg-config stanza in cabal.project nor a shim to strip)
+      src = lib.cleanSourceWith {
+        src = lib.cleanSource ../.;
+        filter = path: type: baseNameOf path != "cabal.project.local";
+      };
+
+      cabalProject = builtins.replaceStrings
+        [ "program-locations\n  pkg-config-location: ./scripts/pkg-config" ]
+        [ "" ]
+        (builtins.readFile ../cabal.project);
+      # END union source only
 
       flake.variants = {
-        ghc966 = {}; # Alias for the default variant
+        ghc96 = {}; # Alias for the default variant
+        ghc912 = { compiler-nix-name = "ghc9122"; };
       };
 
       inputMap = { "https://chap.intersectmbo.org/" = inputs.CHaP; };
