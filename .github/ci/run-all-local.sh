@@ -8,9 +8,6 @@
 #
 # The heavy steps compile the project; to speed up repeated ghc-cabal runs,
 # point CABAL_STORE_DIR at a persistent directory.
-#
-# (build-windows.sh is not run here: it only works on a Windows machine
-# inside an MSYS2 MINGW64 shell.)
 
 set -uo pipefail
 

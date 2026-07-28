@@ -4,8 +4,12 @@
 # drift (toolchains, the devx image, the binary caches).
 #
 # Every job is a thin wrapper around a script in .github/ci/, so the same
-# checks run locally: see .github/ci/run-all-local.sh (build-windows.sh is
-# the exception — it needs a Windows machine with MSYS2).
+# checks run locally: see .github/ci/run-all-local.sh.
+#
+# There is no native-Windows job on purpose: plutus-tx-plugin declares
+# `buildable: False` on Windows (see its os-support stanza), so no Plinth
+# project can build there. Windows users go through WSL2 (which the Linux
+# jobs cover); install.sh enforces this.
 name: CI
 
 on:
@@ -78,42 +82,6 @@ jobs:
             crypto-cabal-${{ runner.os }}-${{ matrix.ghc }}-
 
       - run: .github/ci/build-ghc-cabal.sh
-
-  build-windows:
-    name: template build (windows, ghc ${{ matrix.ghc }})
-    runs-on: windows-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        ghc: ["9.6.7", "9.12.2"]
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: haskell-actions/setup@v2
-        id: setup
-        with:
-          ghc-version: ${{ matrix.ghc }}
-          cabal-version: latest
-
-      - name: Cache cabal store
-        uses: actions/cache@v4
-        with:
-          path: ${{ steps.setup.outputs.cabal-store }}
-          key: crypto-cabal-${{ runner.os }}-${{ matrix.ghc }}-${{ hashFiles('template/cabal.project') }}
-          restore-keys: |
-            crypto-cabal-${{ runner.os }}-${{ matrix.ghc }}-
-
-      # install.sh does not support native Windows; this builds template/
-      # directly with the msys2 crypto libraries (see the script's header).
-      # The script must run under MSYS2's own bash (absolute path — a bare
-      # `bash` would resolve to Git Bash, which has no pacman); ghc/cabal
-      # reach it through the inherited Windows PATH.
-      - name: Build inside MSYS2 (MINGW64)
-        shell: C:/msys64/usr/bin/bash.exe -e '{0}'
-        env:
-          MSYSTEM: MINGW64
-          CHERE_INVOKING: 1
-        run: /usr/bin/bash .github/ci/build-windows.sh
 
   build-nix:
     name: nix project (nix develop .#${{ matrix.shell }})
