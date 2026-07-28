@@ -63,12 +63,10 @@ the target's libraries regardless of the build host.
 > both instantly from the cache (no re-download).
 
 > NOTE (for Windows users):
-> Prebuilt MSYS2 packages (`msys2.*.pkg.tar.zstd`) are published in the same
-> release. Install them with `pacman -U` inside an MSYS2 MINGW64 environment
-> and point `PKG_CONFIG_PATH` at them — this is exactly what the template's
-> Windows CI does, see `.github/ci/build-windows.sh` in the
-> [template repository](https://github.com/IntersectMBO/plinth-template).
-> Alternatively, use WSL2 and follow the Linux instructions.
+> Plinth does not work on native Windows: `plutus-tx-plugin` declares
+> `buildable: False` there. Use
+> [WSL2](https://learn.microsoft.com/windows/wsl/install) and follow the
+> Linux instructions.
 
 ## 3. Run the example application
 

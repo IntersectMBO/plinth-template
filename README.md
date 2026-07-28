@@ -71,9 +71,11 @@ system-wide instead) and the GHC+Cabal README
   | `build-ghc-cabal.sh`       | full build of an installed GHC+Cabal project       | `ci.yaml`                |
   | `build-nix.sh`             | full build of an installed Nix project (= Demeter) | `ci.yaml`                |
   | `build-docker.sh`          | full build inside the devx devcontainer image      | `ci.yaml`                |
-  | `build-windows.sh`         | template build on native Windows (MSYS2 libs)      | `ci.yaml`                |
   | `bump-plutus-version.sh`   | bumps plutus + index-states in template/           | `bump-plutus-version.yml`|
   | `test-blueprint-parity.sh` | blueprint byte-parity between ghcup and nix        | (manual)                 |
 
   [ci.yaml](.github/workflows/ci.yaml) runs all of its jobs in parallel on
   every pull request — no path filters, everything is rebuilt and retested.
+  There is deliberately no native-Windows job: `plutus-tx-plugin` declares
+  `buildable: False` on Windows, so Plinth projects only work there through
+  WSL2 (covered by the Linux jobs).

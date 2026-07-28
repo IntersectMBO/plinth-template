@@ -17,7 +17,6 @@ SCRIPTS=(
   .github/ci/build-ghc-cabal.sh
   .github/ci/build-nix.sh
   .github/ci/build-docker.sh
-  .github/ci/build-windows.sh
   .github/ci/bump-plutus-version.sh
   .github/ci/run-all-local.sh
   .github/ci/test-blueprint-parity.sh
