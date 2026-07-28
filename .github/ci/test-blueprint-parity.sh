@@ -8,44 +8,44 @@
 #
 # Four scenarios are built and compared:
 #
-#   1. ghcup cabal + ghcup ghc-9.6.7   + prebuilt IOG crypto libs (flag ON)
-#   2. ghcup cabal + ghcup ghc-9.12.2  + prebuilt IOG crypto libs (flag ON)
-#   3. nix develop .#ghc96  (ghc 9.6.7,  crypto libs from nix, flag OFF)
-#   4. nix develop .#ghc912 (ghc 9.12.2, crypto libs from nix, flag OFF)
+#   1. ghcup cabal + ghcup ghc-9.6.7   + prebuilt IOG crypto libs (downloaded)
+#   2. ghcup cabal + ghcup ghc-9.12.2  + prebuilt IOG crypto libs (downloaded)
+#   3. nix develop .#ghc96  (ghc 9.6.7,  crypto libs from nix)
+#   4. nix develop .#ghc912 (ghc 9.12.2, crypto libs from nix)
 #
 # The script asserts aggressively that every toolchain component and the
 # crypto C libraries come from the expected source in each scenario:
 #
-#   * ghcup scenarios: ghc/cabal resolve to $HOME/.ghcup/bin, and cabal reaches
-#     the crypto libraries exclusively through the scripts/pkg-config shim
-#     declared in cabal.project (which downloads them on first use — no manual
-#     bootstrap step is performed by this test — and restricts the real
-#     pkg-config to them with PKG_CONFIG_LIBDIR); the produced executable links
-#     crypto dylibs from dist-newstyle/crypto-libs/ and nowhere else.
-#   * nix scenarios: ghc/cabal resolve to /nix/store, the prebuilt-libs flag
-#     is OFF (PLINTH_USE_SYSTEM_CRYPTO_LIBS=1, and we assert the script
-#     no-ops), and the produced executable links crypto dylibs from /nix/store
-#     and in particular NOT from dist-newstyle/crypto-libs/.
+#   * ghcup scenarios: ghc/cabal resolve to $HOME/.ghcup/bin; the crypto
+#     libraries are installed by ./get-crypto-libs.sh (per-user cache, linked
+#     into dist-newstyle/crypto-libs/) and the build sees them EXCLUSIVELY —
+#     PKG_CONFIG_LIBDIR masks every system pkg-config directory; the produced
+#     executable links crypto dylibs from the plinth cache and nowhere else.
+#   * nix scenarios: ghc/cabal resolve to /nix/store, the crypto libraries
+#     come from the nix shell, and the produced executable links crypto
+#     dylibs from /nix/store and in particular NOT from the plinth cache.
 #
 # Usage:
-#   dev/ci/test-blueprint-parity.sh                # run all four scenarios
-#   dev/ci/test-blueprint-parity.sh ghcup-ghc967   # run a single scenario
+#   .github/ci/test-blueprint-parity.sh                # run all four scenarios
+#   .github/ci/test-blueprint-parity.sh ghcup-ghc967   # run a single scenario
 #     (scenarios: ghcup-ghc967 ghcup-ghc9122 nix-ghc96 nix-ghc912 compare)
 #
 # Environment:
 #   PARITY_FRESH=1                Wipe the downloaded crypto libs, the test
 #                                 cabal store and the test builddirs first, so
 #                                 the ghcup scenarios prove the whole
-#                                 cold-start flow (solver bootstrap included).
+#                                 cold-start flow.
 #   PARITY_ALLOW_GHC_DIVERGENCE=1 Downgrade the cross-GHC comparison to a
 #                                 warning (see compare_outputs).
 
-# shellcheck disable=SC2015 # A && B || C used deliberately in assertions
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-# The pkg-config-location in cabal.project is relative to the invocation dir.
-cd "$ROOT"
+# The buildable project (cabal.project et al.) lives in template/;
+# get-crypto-libs.sh lives at the repository root and links the libraries
+# into $ROOT/dist-newstyle/crypto-libs/.
+TEMPLATE="$ROOT/template"
+cd "$TEMPLATE"
 TESTDIR="$ROOT/dist-newstyle/test"
 STORE_DIR="$TESTDIR/store"
 BLUEPRINTS="$TESTDIR/blueprints"
@@ -70,7 +70,9 @@ banner() { echo; echo "=== $* ==="; }
 
 assert_eq() {
   # assert_eq <what> <expected> <actual>
-  [ "$2" = "$3" ] || fail "$1: expected '$2', got '$3'"
+  if [ "$2" != "$3" ]; then
+    fail "$1: expected '$2', got '$3'"
+  fi
   note "$1 = $2"
 }
 
@@ -118,7 +120,7 @@ EOF
 }
 
 # --------------------------------------------------------------------------
-# ghcup scenarios (prebuilt crypto libs flag ON — the default)
+# ghcup scenarios (crypto libs downloaded by get-crypto-libs.sh)
 # --------------------------------------------------------------------------
 
 run_ghcup_scenario() {
@@ -128,15 +130,14 @@ run_ghcup_scenario() {
   local builddir="$TESTDIR/$scenario"
   local out="$BLUEPRINTS/$scenario.json"
 
-  banner "Scenario $scenario: ghcup cabal + ghcup ghc-$ghc_version + prebuilt IOG crypto libs (via scripts/pkg-config shim)"
+  banner "Scenario $scenario: ghcup cabal + ghcup ghc-$ghc_version + prebuilt IOG crypto libs (via get-crypto-libs.sh)"
 
-  # Hermetic PATH: ghcup, the OS, and the directory of the real pkg-config
-  # (the shim's backend). The crypto libs can still only be reached through
-  # the scripts/pkg-config shim that cabal.project points cabal at: the shim
-  # restricts the real pkg-config to the downloaded libraries with
-  # PKG_CONFIG_LIBDIR, masking every system search directory.
-  command -v pkg-config >/dev/null 2>&1 \
-    || fail "pkg-config not found; install it (e.g. brew install pkgconf / apt install pkg-config)"
+  # Hermetic PATH: ghcup, the OS, and the directory of the real pkg-config.
+  # The build reaches the crypto libs exclusively through PKG_CONFIG_LIBDIR,
+  # which masks every system pkg-config search directory.
+  if ! command -v pkg-config >/dev/null 2>&1; then
+    fail "pkg-config not found; install it (e.g. brew install pkgconf / apt install pkg-config)"
+  fi
   local pkgconfig_dir
   pkgconfig_dir="$(dirname "$(command -v pkg-config)")"
   local path="$GHCUP_BIN:$pkgconfig_dir:/usr/bin:/bin:/usr/sbin:/sbin"
@@ -153,57 +154,55 @@ run_ghcup_scenario() {
 
   # 1. Assert the toolchain comes from ghcup.
   local ghc_path cabal_path
-  ghc_path="$(env -i PATH="$path" sh -c "command -v ghc-$ghc_version")" \
-    || fail "ghc-$ghc_version not found in $GHCUP_BIN (install with: ghcup install ghc $ghc_version)"
-  cabal_path="$(env -i PATH="$path" sh -c 'command -v cabal')" || fail "cabal not found in $GHCUP_BIN"
+  if ! ghc_path="$(env -i PATH="$path" sh -c "command -v ghc-$ghc_version")"; then
+    fail "ghc-$ghc_version not found in $GHCUP_BIN (install with: ghcup install ghc $ghc_version)"
+  fi
+  if ! cabal_path="$(env -i PATH="$path" sh -c 'command -v cabal')"; then
+    fail "cabal not found in $GHCUP_BIN"
+  fi
   assert_prefix "$scenario: ghc" "$GHCUP_BIN/" "$ghc_path"
   assert_prefix "$scenario: cabal" "$GHCUP_BIN/" "$cabal_path"
   assert_eq "$scenario: ghc version" "$ghc_version" \
     "$(env -i PATH="$path" sh -c "ghc-$ghc_version --numeric-version")"
 
-  # 2. Build and run — NO manual bootstrap: cabal's solver invokes the shim,
-  #    and the shim downloads and installs the crypto libs on first use. A
-  #    dedicated builddir is used because cabal caches install plans and would
-  #    not re-solve after environment changes; a dedicated store keeps
-  #    artifacts built against other library sources out of reach.
-  local cabal=(env -i HOME="$HOME" PATH="$path"
-               cabal --store-dir="$STORE_DIR")
-  local flags=(-w "ghc-$ghc_version" --builddir="$builddir")
-
-  # On a cold start (no cabal.project.local yet) the first build bootstraps
-  # the libs and writes cabal.project.local mid-run, too late for its own
-  # configure phase — it stops once, and the re-run picks the file up. Any
-  # other failure must fail twice and therefore still fails the test.
-  if ! "${cabal[@]}" build "${flags[@]}" exe:gen-auction-validator-blueprint; then
-    [ -f "$ROOT/cabal.project.local" ] \
-      || fail "$scenario: cabal build failed without writing cabal.project.local"
-    note "cold-start build stopped once as documented; re-running with cabal.project.local in place"
-    "${cabal[@]}" build "${flags[@]}" exe:gen-auction-validator-blueprint
+  # 2. Install the crypto libraries (per-user cache, linked into the repo's
+  #    dist-newstyle/crypto-libs/) — a fast no-op when already cached.
+  if ! "$ROOT/get-crypto-libs.sh" --quiet --platform "$platform"; then
+    fail "$scenario: get-crypto-libs.sh failed"
   fi
-  rm -f "$out"
-  "${cabal[@]}" run -v0 "${flags[@]}" exe:gen-auction-validator-blueprint -- "$out"
-  [ -s "$out" ] || fail "$scenario: blueprint file was not produced"
-
-  # 3. The build itself must have bootstrapped the libs via the shim, and the
-  #    shim must resolve them exclusively from the local install.
-  [ -f "$pcdir/libsodium.pc" ] && [ -f "$pcdir/libsecp256k1.pc" ] && [ -f "$pcdir/libblst.pc" ] \
-    || fail "$scenario: cabal did not bootstrap the crypto libs via the shim"
-  [ -L "$prefix" ] \
-    || fail "$scenario: $prefix should be a symlink into the per-user cache"
+  if [ ! -f "$pcdir/libsodium.pc" ] || [ ! -f "$pcdir/libsecp256k1.pc" ] || [ ! -f "$pcdir/libblst.pc" ]; then
+    fail "$scenario: get-crypto-libs.sh did not install the crypto libs"
+  fi
+  if [ ! -L "$prefix" ]; then
+    fail "$scenario: $prefix should be a symlink into the per-user cache"
+  fi
   # The real install lives in the per-user cache; the project path is a
   # symlink to it, and all recorded paths (pc prefix, install names) use the
   # resolved cache location.
   local real_prefix
   real_prefix="$(cd "$prefix" && pwd -P)"
-  note "cabal bootstrapped the crypto libs: $prefix -> $real_prefix"
-  grep -qF "pkg-config-location: $ROOT/scripts/pkg-config" "$ROOT/cabal.project.local" \
-    || fail "$scenario: cabal.project.local does not carry the shim stanza"
-  note "cabal.project.local carries the absolute shim location for package configure"
-  assert_eq "$scenario: shim libsodium prefix" "$real_prefix" \
-    "$(env -i PATH="$path" "$ROOT/scripts/pkg-config" --variable=prefix libsodium)"
-  env -i PATH="$path" "$ROOT/scripts/pkg-config" --exists libblst libsecp256k1 \
-    || fail "$scenario: shim cannot resolve libblst/libsecp256k1"
-  note "shim resolves libsodium/libsecp256k1/libblst exclusively from the local install"
+  note "crypto libs installed: $prefix -> $real_prefix"
+  assert_eq "$scenario: libsodium prefix" "$real_prefix" \
+    "$(env -i PATH="$path" PKG_CONFIG_LIBDIR="$pcdir" pkg-config --variable=prefix libsodium)"
+  if ! env -i PATH="$path" PKG_CONFIG_LIBDIR="$pcdir" pkg-config --exists libblst libsecp256k1; then
+    fail "$scenario: pkg-config cannot resolve libblst/libsecp256k1 from $pcdir"
+  fi
+  note "pkg-config resolves libsodium/libsecp256k1/libblst exclusively from the local install"
+
+  # 3. Build and run. A dedicated builddir is used because cabal caches
+  #    install plans and would not re-solve after environment changes; a
+  #    dedicated store keeps artifacts built against other library sources
+  #    out of reach.
+  local cabal=(env -i HOME="$HOME" PATH="$path" PKG_CONFIG_LIBDIR="$pcdir"
+               cabal --store-dir="$STORE_DIR")
+  local flags=(-w "ghc-$ghc_version" --builddir="$builddir")
+
+  "${cabal[@]}" build "${flags[@]}" exe:gen-auction-validator-blueprint
+  rm -f "$out"
+  "${cabal[@]}" run -v0 "${flags[@]}" exe:gen-auction-validator-blueprint -- "$out"
+  if [ ! -s "$out" ]; then
+    fail "$scenario: blueprint file was not produced"
+  fi
 
   # 4. Assert the plan used the expected compiler.
   assert_eq "$scenario: plan compiler-id" "ghc-$ghc_version" \
@@ -224,7 +223,7 @@ run_ghcup_scenario() {
 }
 
 # --------------------------------------------------------------------------
-# nix scenarios (prebuilt crypto libs flag OFF — libs must come from nix)
+# nix scenarios (crypto libs must come from the nix shell)
 # --------------------------------------------------------------------------
 
 run_nix_scenario() {
@@ -234,13 +233,15 @@ run_nix_scenario() {
 
   banner "Scenario $scenario: nix develop .#$shell (ghc $ghc_version, crypto libs from nix)"
 
-  command -v nix >/dev/null 2>&1 || fail "nix not found"
+  if ! command -v nix >/dev/null 2>&1; then
+    fail "nix not found"
+  fi
 
-  # PLINTH_USE_SYSTEM_CRYPTO_LIBS=1 turns the prebuilt-libs feature OFF;
-  # inside the nix shell the libs are provided by the iohk-nix overlays.
-  PLINTH_USE_SYSTEM_CRYPTO_LIBS=1 \
-    nix develop "$ROOT#$shell" --command bash "$ROOT/dev/ci/test-blueprint-parity.sh" \
-      --inner-nix "$scenario" "$ghc_version"
+  # Inside the nix shell the libs are provided by the iohk-nix overlays;
+  # nothing is downloaded and nothing of get-crypto-libs.sh's output is used.
+  nix develop "path:$TEMPLATE#$shell" --command bash \
+    "$ROOT/.github/ci/test-blueprint-parity.sh" \
+    --inner-nix "$scenario" "$ghc_version"
 
   echo "Scenario $scenario OK -> $BLUEPRINTS/$scenario.json"
 }
@@ -251,17 +252,19 @@ inner_nix() {
   local builddir="$TESTDIR/$scenario"
   local out="$BLUEPRINTS/$scenario.json"
 
-  # 1. Assert the flag is OFF and the get-crypto-libs script is a no-op.
-  assert_eq "$scenario: PLINTH_USE_SYSTEM_CRYPTO_LIBS" "1" "${PLINTH_USE_SYSTEM_CRYPTO_LIBS:-}"
-  local msg
-  msg="$("$ROOT/scripts/get-crypto-libs.sh")"
-  assert_contains "$scenario: get-crypto-libs.sh" "skipping download" "$msg"
-  [ -z "${PKG_CONFIG_LIBDIR:-}" ] || fail "$scenario: PKG_CONFIG_LIBDIR leaked into the nix shell"
+  # 1. The downloaded libs must not be reachable through the environment.
+  if [ -n "${PKG_CONFIG_LIBDIR:-}" ]; then
+    fail "$scenario: PKG_CONFIG_LIBDIR leaked into the nix shell"
+  fi
 
   # 2. Assert the toolchain comes from the nix store.
   local ghc_path cabal_path
-  ghc_path="$(command -v ghc)" || fail "no ghc in the nix shell"
-  cabal_path="$(command -v cabal)" || fail "no cabal in the nix shell"
+  if ! ghc_path="$(command -v ghc)"; then
+    fail "no ghc in the nix shell"
+  fi
+  if ! cabal_path="$(command -v cabal)"; then
+    fail "no cabal in the nix shell"
+  fi
   assert_prefix "$scenario: ghc" "/nix/store/" "$ghc_path"
   assert_prefix "$scenario: cabal" "/nix/store/" "$cabal_path"
   assert_eq "$scenario: ghc version" "$ghc_version" "$(ghc --numeric-version)"
@@ -270,7 +273,9 @@ inner_nix() {
   rm -f "$out"
   cabal build --builddir="$builddir" exe:gen-auction-validator-blueprint
   cabal run -v0 --builddir="$builddir" exe:gen-auction-validator-blueprint -- "$out"
-  [ -s "$out" ] || fail "$scenario: blueprint file was not produced"
+  if [ ! -s "$out" ]; then
+    fail "$scenario: blueprint file was not produced"
+  fi
 
   # 4. Assert the plan used the expected compiler.
   assert_eq "$scenario: plan compiler-id" "ghc-$ghc_version" \
@@ -317,7 +322,9 @@ compare_outputs() {
   local all="ghcup-ghc${GHC96_VERSION//./} ghcup-ghc${GHC912_VERSION//./} nix-ghc96 nix-ghc912"
   for name in $all; do
     f="$BLUEPRINTS/$name.json"
-    [ -s "$f" ] || fail "missing blueprint for scenario $name ($f). Run that scenario first."
+    if [ ! -s "$f" ]; then
+      fail "missing blueprint for scenario $name ($f). Run that scenario first."
+    fi
     echo "  $(shasum -a 256 "$f" 2>/dev/null || sha256sum "$f")"
   done
   echo
@@ -359,12 +366,11 @@ if [ "${1:-}" = "--inner-nix" ]; then
 fi
 
 if [ "${PARITY_FRESH:-0}" = 1 ]; then
-  banner "PARITY_FRESH=1: wiping the crypto libs cache, cabal.project.local, test store and test builddirs (fresh-clone simulation)"
+  banner "PARITY_FRESH=1: wiping the crypto libs cache, test store and test builddirs (fresh-clone simulation)"
   CRYPTO_CACHE="${PLINTH_CRYPTO_LIBS_HOME:-${XDG_CACHE_HOME:-$HOME/.cache}/plinth-crypto-libs}"
   chmod -R u+w "$ROOT/dist-newstyle/crypto-libs" "$CRYPTO_CACHE" 2>/dev/null || true
   rm -rf "$ROOT/dist-newstyle/crypto-libs" "$CRYPTO_CACHE" "$STORE_DIR" \
          "$TESTDIR/ghcup-ghc${GHC96_VERSION//./}" "$TESTDIR/ghcup-ghc${GHC912_VERSION//./}"
-  rm -f "$ROOT/cabal.project.local"
 fi
 
 case "${1:-all}" in
