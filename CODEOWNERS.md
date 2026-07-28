@@ -1,3 +1,3 @@
-# Plutus Tx Template Codeowners
+# Plinth Template Codeowners
 
 * @zeme-wana

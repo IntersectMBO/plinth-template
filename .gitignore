@@ -1,7 +1,4 @@
 dist-newstyle
-.pre-commit-config.yaml
-validator.uplc
-blueprint.json
-cabal.project.freeze
 cabal.project.local
+blueprint.json
 result

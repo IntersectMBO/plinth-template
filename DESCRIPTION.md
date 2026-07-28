@@ -1,4 +1,4 @@
-# Plinth Template
+# Plinth Template Description
 
 This is a template repository for kickstarting your Plinth smart contract project.
 

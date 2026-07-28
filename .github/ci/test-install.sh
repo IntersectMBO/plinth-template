@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2015 # pass/fail assertion helpers never fail themselves
 #
-# End-to-end test of install.sh. The repository is a single branch carrying
-# the union of every environment's files; the installer selects the relevant
-# ones into a fresh project directory. This test builds a local git fixture
-# of the union tree (no network cloning) and checks, for every environment:
+# End-to-end test of install.sh. The repository's template/ directory
+# carries the union of every environment's project files; the installer
+# selects the relevant ones into a fresh project directory. This test builds
+# a local git fixture of the repository (no network cloning) and checks, for
+# every environment:
 #
 #   * the produced project contains EXACTLY the expected files (manifest)
-#   * the environment-specific edits were applied (pkg-config stanza only in
-#     GHC+Cabal projects, simplified nix/project.nix, no leftover markers)
+#   * only the right files were selected (crypto-libs script only in
+#     GHC+Cabal projects, nix files only in Nix/Demeter projects, ...)
 #   * the project has the right README and a fresh git history
 #   * the final instructions tell the user to run `cabal build all`
 #
@@ -37,21 +37,24 @@ pass() { echo "  ok: $*"; }
 # Fixture 1: a local git repository with the union tree on a single branch
 # --------------------------------------------------------------------------
 
-echo "== building local template repository (single union branch) =="
-SRC="$WORK/template"
+echo "== building local template repository =="
+SRC="$WORK/fixture-repo"
 git init -q "$SRC"
 git ls-files --cached --others --exclude-standard | while IFS= read -r f; do
-  [ -f "$f" ] || continue
+  if [ ! -f "$f" ]; then
+    continue
+  fi
   case "$f" in */*) mkdir -p "$SRC/${f%/*}" ;; esac
   cp -p "$f" "$SRC/$f"
 done
 git -C "$SRC" add -A
 git -C "$SRC" -c user.name=ci -c user.email=ci@example.invalid \
-  commit -qm "plinth-template union"
-# gitignored junk that must never reach a project created with --from
-mkdir -p "$SRC/dist-newstyle"
-echo junk > "$SRC/dist-newstyle/junk"
-echo junk > "$SRC/cabal.project.local"
+  commit -qm "plinth-template"
+# gitignored junk (a local build inside template/) that must never reach a
+# project created with --from
+mkdir -p "$SRC/template/dist-newstyle"
+echo junk > "$SRC/template/dist-newstyle/junk"
+echo junk > "$SRC/template/cabal.project.local"
 pass "fixture repo built from the working tree (with gitignored junk seeded)"
 
 # --------------------------------------------------------------------------
@@ -68,7 +71,9 @@ mkdir -p "$FARM"
 # new PATH.
 for t in sh bash uname grep sed tr dirname basename mktemp git curl tar rm mkdir \
          cat find chmod cp mv ln awk; do
-  p="$(command -v "$t" 2>/dev/null)" || continue
+  if ! p="$(command -v "$t" 2>/dev/null)"; then
+    continue
+  fi
   ln -s "$p" "$FARM/$t"
 done
 
@@ -136,8 +141,13 @@ expect_in_log() {
   if grep -qF "$2" "$1"; then pass "log mentions '$2'"; else fail "log lacks '$2' ($1)"; fi
 }
 
-contains() { grep -qF "$2" "$1" && pass "${1#"$WORK"/} contains '$2'" || fail "${1#"$WORK"/} does not contain '$2'"; }
-lacks()    { if grep -qF "$2" "$1" 2>/dev/null; then fail "${1#"$WORK"/} contains forbidden '$2'"; else pass "${1#"$WORK"/} lacks '$2'"; fi; }
+contains() {
+  if grep -qF "$2" "$1"; then
+    pass "${1#"$WORK"/} contains '$2'"
+  else
+    fail "${1#"$WORK"/} does not contain '$2'"
+  fi
+}
 
 # expect_manifest DIR  (expected file list on stdin; .git is ignored)
 expect_manifest() {
@@ -172,17 +182,6 @@ nix/project.nix
 nix/shell.nix
 nix/utils.nix"
 
-# no_leftover_markers DIR: no installer marker may survive in any project
-no_leftover_markers() {
-  if grep -rqF -e "BEGIN ghc-cabal only" -e "END ghc-cabal only" \
-       -e "BEGIN union source only" -e "END union source only" \
-       --exclude-dir=.git "$1" 2>/dev/null; then
-    fail "installer markers leaked into $1"
-  else
-    pass "no leftover installer markers"
-  fi
-}
-
 # --------------------------------------------------------------------------
 # Non-interactive happy paths, one per environment
 # --------------------------------------------------------------------------
@@ -193,13 +192,14 @@ if run_install "$WORK/log-cabal" PATH="$GOOD:$FARM" -- \
      --yes --env cabal --dir "$WORK/out-cabal" --crypto-libs skip; then
   expect_manifest "$WORK/out-cabal" <<EOF
 $COMMON
-scripts/get-crypto-libs.sh
-scripts/pkg-config
+get-crypto-libs.sh
 EOF
-  [ -x "$WORK/out-cabal/scripts/pkg-config" ] && pass "shim is executable" || fail "shim lost its executable bit"
-  contains "$WORK/out-cabal/cabal.project" "pkg-config-location: ./scripts/pkg-config"
+  if [ -x "$WORK/out-cabal/get-crypto-libs.sh" ]; then
+    pass "get-crypto-libs.sh is executable"
+  else
+    fail "get-crypto-libs.sh lost its executable bit"
+  fi
   contains "$WORK/out-cabal/README.md" "GHC + Cabal edition"
-  no_leftover_markers "$WORK/out-cabal"
   expect_fresh_git "$WORK/out-cabal"
   expect_in_log "$WORK/log-cabal" "cabal build all"
   expect_in_log "$WORK/log-cabal" "libsodium"
@@ -215,9 +215,7 @@ if run_install "$WORK/log-docker" PATH="$GOOD:$FARM" -- \
 $COMMON
 .devcontainer/devcontainer.json
 EOF
-  lacks "$WORK/out-docker/cabal.project" "program-locations"
   contains "$WORK/out-docker/README.md" "Docker edition"
-  no_leftover_markers "$WORK/out-docker"
   expect_fresh_git "$WORK/out-docker"
   expect_in_log "$WORK/log-docker" "cabal build all"
 else
@@ -232,12 +230,8 @@ if run_install "$WORK/log-demeter" PATH="$GOOD:$FARM" -- \
 $COMMON
 $NIX_FILES
 EOF
-  lacks "$WORK/out-demeter/cabal.project" "program-locations"
-  lacks "$WORK/out-demeter/nix/project.nix" "replaceStrings"
-  lacks "$WORK/out-demeter/nix/project.nix" "cabal.project.local"
   contains "$WORK/out-demeter/nix/project.nix" "src = lib.cleanSource ../.;"
   contains "$WORK/out-demeter/README.md" "demeter.run"
-  no_leftover_markers "$WORK/out-demeter"
   expect_fresh_git "$WORK/out-demeter"
   expect_in_log "$WORK/log-demeter" "cabal build all"
 else
@@ -254,10 +248,8 @@ if command -v nix >/dev/null 2>&1; then
 $COMMON
 $NIX_FILES
 EOF
-    lacks "$WORK/out-nix/cabal.project" "program-locations"
     contains "$WORK/out-nix/nix/project.nix" "src = lib.cleanSource ../.;"
     contains "$WORK/out-nix/README.md" "Nix edition"
-    no_leftover_markers "$WORK/out-nix"
     expect_fresh_git "$WORK/out-nix"
     expect_in_log "$WORK/log-nix" "cabal build all"
     expect_in_log "$WORK/log-nix" "nix develop"
@@ -283,7 +275,13 @@ if ( cd "$WORK/fromtest" && \
   else
     fail "--from did not create my-plinth-project"
   fi
-  lacks "$WORK/fromtest/my-plinth-project/cabal.project" "program-locations"
+  if [ -e "$WORK/fromtest/my-plinth-project/install.sh" ] \
+     || [ -e "$WORK/fromtest/my-plinth-project/template" ] \
+     || [ -e "$WORK/fromtest/my-plinth-project/.github" ]; then
+    fail "repository machinery leaked into the project"
+  else
+    pass "no repository machinery (install.sh, template/, .github/) in the project"
+  fi
   # --from a working checkout must respect .gitignore (the fixture is seeded
   # with gitignored junk) and never copy git metadata
   if [ -e "$WORK/fromtest/my-plinth-project/dist-newstyle" ] \
@@ -327,9 +325,11 @@ echo "== interactive (scripted): choose GHC+Cabal, skip crypto libs =="
 printf '4\n3\nmy-scripted-project\n' > "$WORK/answers"
 if ( cd "$WORK" && run_install "$WORK/log-interactive" \
        PATH="$GOOD:$FARM" PLINTH_INSTALL_TTY="$WORK/answers" -- ); then
-  [ -f "$WORK/my-scripted-project/scripts/get-crypto-libs.sh" ] \
-    && pass "interactive run created the ghc-cabal project" \
-    || fail "interactive run did not create the expected project"
+  if [ -f "$WORK/my-scripted-project/get-crypto-libs.sh" ]; then
+    pass "interactive run created the ghc-cabal project"
+  else
+    fail "interactive run did not create the expected project"
+  fi
   expect_in_log "$WORK/log-interactive" "cabal build all"
 else
   fail "interactive run exited non-zero"; sed 's/^/    /' "$WORK/log-interactive" | tail -30
@@ -347,7 +347,11 @@ if run_install "$WORK/log-nonix" PATH="$GOOD:$FARM" -- \
 else
   pass "exits non-zero"
   expect_in_log "$WORK/log-nonix" "nix is not installed"
-  [ ! -e "$WORK/out-nonix" ] && pass "nothing created" || fail "created despite failed checks"
+  if [ ! -e "$WORK/out-nonix" ]; then
+    pass "nothing created"
+  else
+    fail "created despite failed checks"
+  fi
 fi
 
 echo ""
@@ -358,7 +362,11 @@ if run_install "$WORK/log-oldghc" PATH="$OLDGHC:$FARM" -- \
 else
   pass "exits non-zero"
   expect_in_log "$WORK/log-oldghc" "unsupported GHC version 9.4.8"
-  [ ! -e "$WORK/out-oldghc" ] && pass "nothing created" || fail "created despite failed checks"
+  if [ ! -e "$WORK/out-oldghc" ]; then
+    pass "nothing created"
+  else
+    fail "created despite failed checks"
+  fi
 fi
 
 echo ""
@@ -409,6 +417,10 @@ fi
 echo ""
 if [ "${PLINTH_TEST_OFFLINE:-0}" = 1 ]; then
   echo "== crypto-libs local download: skipped (PLINTH_TEST_OFFLINE=1) =="
+elif ! command -v pkg-config >/dev/null 2>&1; then
+  # (CI runners always have pkg-config; this only skips on bare dev machines)
+  echo "== crypto-libs local download: SKIPPED — no pkg-config on this host =="
+  echo "   install one (brew install pkgconf / apt install pkg-config) to run it"
 else
   echo "== --crypto-libs local: real download (hermetic cache) =="
   # Real pkg-config required for the installer's sanity check of the
@@ -420,7 +432,9 @@ else
        --yes --env cabal --dir "$WORK/out-crypto" --crypto-libs local; then
     found=""
     for pc in "$WORK/out-crypto"/dist-newstyle/crypto-libs/*/lib/pkgconfig/libsodium.pc; do
-      [ -f "$pc" ] && found="$pc"
+      if [ -f "$pc" ]; then
+        found="$pc"
+      fi
     done
     if [ -n "$found" ]; then
       pass "libsodium.pc reachable in the project: ${found#"$WORK"/}"

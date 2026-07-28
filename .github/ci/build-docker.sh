@@ -47,33 +47,44 @@ trap cleanup EXIT
 
 PROJECT="$WORK/project"
 if [ -z "$TREE" ]; then
-  sh "$ROOT/install.sh" --yes --env docker --docker-mode standalone --from "$ROOT" \
-    --dir "$PROJECT" >"$WORK/install.log" 2>&1 \
-    || { cat "$WORK/install.log" >&2; fail "install.sh --env docker failed"; }
+  if ! sh "$ROOT/install.sh" --yes --env docker --docker-mode standalone --from "$ROOT" \
+         --dir "$PROJECT" >"$WORK/install.log" 2>&1; then
+    cat "$WORK/install.log" >&2
+    fail "install.sh --env docker failed"
+  fi
 else
   mkdir -p "$PROJECT"
   cp -R "$TREE/." "$PROJECT/"
 fi
-[ -f "$PROJECT/.devcontainer/devcontainer.json" ] || fail "$PROJECT is not a docker project"
+if [ ! -f "$PROJECT/.devcontainer/devcontainer.json" ]; then
+  fail "$PROJECT is not a docker project"
+fi
 
 # `bash -ic` is required: the devx image loads the nix toolchain environment
 # from ~/.bashrc, which only interactive shells source.
 note "building inside $IMAGE ..."
-docker run --rm \
-  -v "$PROJECT:/workspaces/plinth-template" \
-  -w /workspaces/plinth-template \
-  -i "$IMAGE" \
-  bash -ic '
-    set -euo pipefail
-    echo "build-docker(container): ghc $(ghc --numeric-version) at $(command -v ghc)"
-    pkg-config --exists libsodium libsecp256k1 libblst \
-      || { echo "build-docker(container): FAIL: crypto libs not provided by the image" >&2; exit 1; }
-    echo "build-docker(container): crypto libs provided by the image (via nix)"
-    cabal update
-    cabal build all
-    cabal run -v0 exe:gen-auction-validator-blueprint -- blueprint.json
-    [ -s blueprint.json ] || { echo "build-docker(container): FAIL: empty blueprint" >&2; exit 1; }
-    echo "build-docker(container): blueprint OK"
-  ' || fail "container build failed"
+if ! docker run --rm \
+       -v "$PROJECT:/workspaces/plinth-template" \
+       -w /workspaces/plinth-template \
+       -i "$IMAGE" \
+       bash -ic '
+         set -euo pipefail
+         echo "build-docker(container): ghc $(ghc --numeric-version) at $(command -v ghc)"
+         if ! pkg-config --exists libsodium libsecp256k1 libblst; then
+           echo "build-docker(container): FAIL: crypto libs not provided by the image" >&2
+           exit 1
+         fi
+         echo "build-docker(container): crypto libs provided by the image (via nix)"
+         cabal update
+         cabal build all
+         cabal run -v0 exe:gen-auction-validator-blueprint -- blueprint.json
+         if [ ! -s blueprint.json ]; then
+           echo "build-docker(container): FAIL: empty blueprint" >&2
+           exit 1
+         fi
+         echo "build-docker(container): blueprint OK"
+       '; then
+  fail "container build failed"
+fi
 
 echo "build-docker: SUCCESS"

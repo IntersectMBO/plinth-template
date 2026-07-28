@@ -17,17 +17,3 @@ index-state:
 
 packages:
   ./.
-
--- BEGIN ghc-cabal only
--- (install.sh removes this whole block for Nix/Docker/Demeter projects)
--- Route pkg-config through the repo shim so that a plain `cabal build`
--- works without nix and without system-wide crypto C libraries: on first
--- use the shim downloads IOG's prebuilt libsodium/libsecp256k1/libblst
--- (sha256- and commit-pinned, cached per user) and answers pkg-config
--- queries from them. Inside nix shells, or when
--- PLINTH_USE_SYSTEM_CRYPTO_LIBS=1 is set, the shim delegates to the real
--- pkg-config. NOTE: the relative path resolves against the directory cabal
--- is invoked from, so run cabal from the repository root.
-program-locations
-  pkg-config-location: ./scripts/pkg-config
--- END ghc-cabal only

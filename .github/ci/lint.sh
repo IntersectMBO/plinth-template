@@ -11,19 +11,23 @@ cd "$ROOT"
 
 SCRIPTS=(
   install.sh
-  scripts/pkg-config
-  scripts/get-crypto-libs.sh
-  dev/ci/lint.sh
-  dev/ci/test-install.sh
-  dev/ci/build-ghc-cabal.sh
-  dev/ci/build-nix.sh
-  dev/ci/build-docker.sh
-  dev/ci/run-all-local.sh
-  dev/ci/test-blueprint-parity.sh
+  get-crypto-libs.sh
+  .github/ci/lint.sh
+  .github/ci/test-install.sh
+  .github/ci/build-ghc-cabal.sh
+  .github/ci/build-nix.sh
+  .github/ci/build-docker.sh
+  .github/ci/build-windows.sh
+  .github/ci/bump-plutus-version.sh
+  .github/ci/run-all-local.sh
+  .github/ci/test-blueprint-parity.sh
 )
 
 for f in "${SCRIPTS[@]}"; do
-  [ -f "$f" ] || { echo "lint: missing $f" >&2; exit 1; }
+  if [ ! -f "$f" ]; then
+    echo "lint: missing $f" >&2
+    exit 1
+  fi
   case "$(head -1 "$f")" in
     '#!/bin/sh'*) sh -n "$f" ;;
     *) bash -n "$f" ;;

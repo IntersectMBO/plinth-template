@@ -22,46 +22,10 @@ jobs:
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main
 
-      - name: Update flake.lock
-        run: |
-          nix flake update CHaP hackage --accept-flake-config
-
-      - name: Change Plutus Versions
-        run: |
-          set -o pipefail
-
-          PLUTUS_VERSION=${{ github.event.inputs.version }}
-
-          # Derive hackage index-state from the flake-pinned hackage commit,
-          # subtracting 2 hours as safety margin (commit timestamp > latest index entry).
-          HACKAGE_EPOCH=$(jq '.nodes.hackage.locked.lastModified' flake.lock)
-          HACKAGE_EPOCH=$((HACKAGE_EPOCH - 7200))
-          HACKAGE_DATE=$(date -u -d "@$HACKAGE_EPOCH" +"%Y-%m-%dT%H:%M:%SZ")
-
-          # For CHaP, read the index that ships inside the flake-pinned repository:
-          # the mtimes of the entries in 01-index.tar.gz ARE the index-states, so
-          # the newest one is the exact latest index-state of the pinned CHaP —
-          # independent of CHaP's git commit timestamp, which can be arbitrarily
-          # newer (e.g. ghost automation re-runs with 0 file changes).
-          CHAP_REV=$(jq -r '.nodes.CHaP.locked.rev' flake.lock)
-          CHAP_DATE=$(curl -fsSL \
-            "https://raw.githubusercontent.com/IntersectMBO/cardano-haskell-packages/${CHAP_REV}/01-index.tar.gz" \
-            | tar -tvz --full-time -f - \
-            | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}' \
-            | sort | tail -1 | sed 's/ /T/;s/$/Z/')
-
-          if [ -z "$CHAP_DATE" ]; then
-            echo "Failed to determine CHaP index-state" >&2
-            exit 1
-          fi
-
-          sed -i "s/\(hackage.haskell.org \).*$/\1$HACKAGE_DATE/" cabal.project
-          sed -i "s/\(cardano-haskell-packages \).*$/\1$CHAP_DATE/" cabal.project
-
-          sed -i "s/\(plutus-core \).*$/\1\^>=$PLUTUS_VERSION/" "plinth-template.cabal"
-          sed -i "s/\(plutus-ledger-api \).*$/\1\^>=$PLUTUS_VERSION/" "plinth-template.cabal"
-          sed -i "s/\(plutus-tx \).*$/\1\^>=$PLUTUS_VERSION/" "plinth-template.cabal"
-          sed -i "s/\(plutus-tx-plugin \).*$/\1\^>=$PLUTUS_VERSION/" "plinth-template.cabal"
+      - name: Bump Plutus Version
+        env:
+          PLUTUS_VERSION: ${{ github.event.inputs.version }}
+        run: .github/ci/bump-plutus-version.sh "$PLUTUS_VERSION"
 
       - name: Create Pull Request
         id: cpr
@@ -70,7 +34,7 @@ jobs:
           branch: "bump-plutus-${{ github.event.inputs.version }}"
           title: Bump plutus Version to ${{ github.event.inputs.version }}
           commit-message: Bump plutus Version to ${{ github.event.inputs.version }}
-          delete-branch: true 
+          delete-branch: true
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Enable Pull Request Auto-Merge
@@ -80,5 +44,3 @@ jobs:
           pull-request-number: ${{ steps.cpr.outputs.pull-request-number }}
           merge-method: squash
           token: ${{ secrets.GITHUB_TOKEN }}
-    
-
