@@ -27,12 +27,18 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 fail() { echo "build-windows: FAIL: $*" >&2; exit 1; }
 note() { echo "build-windows: $*"; }
 
+# When bash.exe is invoked directly (as CI does) no login profile runs, so
+# MSYSTEM is never processed and MSYS2's own /usr/bin — pacman, cygpath,
+# sha256sum — is not on PATH; only the inherited Windows PATH is. Prepend it
+# explicitly. (In a regular "MSYS2 MINGW64" shell this is a no-op.)
+export PATH="/usr/bin:$PATH"
+
 case "$(uname -s)" in
   MINGW64_NT*|MSYS_NT*) ;;
   *) fail "this script must run inside an MSYS2 (MINGW64) environment on Windows" ;;
 esac
 if ! command -v pacman >/dev/null 2>&1; then
-  fail "pacman not found (not an MSYS2 environment?)"
+  fail "pacman not found — run this from an MSYS2 shell (C:\\msys64), not Git Bash"
 fi
 if ! command -v ghc >/dev/null 2>&1; then
   fail "ghc not on PATH"
