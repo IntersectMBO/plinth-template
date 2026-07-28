@@ -105,13 +105,15 @@ jobs:
 
       # install.sh does not support native Windows; this builds template/
       # directly with the msys2 crypto libraries (see the script's header).
+      # The script must run under MSYS2's own bash (absolute path — a bare
+      # `bash` would resolve to Git Bash, which has no pacman); ghc/cabal
+      # reach it through the inherited Windows PATH.
       - name: Build inside MSYS2 (MINGW64)
         shell: C:/msys64/usr/bin/bash.exe -e '{0}'
         env:
           MSYSTEM: MINGW64
-          MSYS2_PATH_TYPE: inherit
           CHERE_INVOKING: 1
-        run: bash .github/ci/build-windows.sh
+        run: /usr/bin/bash .github/ci/build-windows.sh
 
   build-nix:
     name: nix project (nix develop .#${{ matrix.shell }})
