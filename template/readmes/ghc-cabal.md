@@ -35,9 +35,13 @@ published by IOG at
 into a per-user cache (`~/.cache/plinth-crypto-libs`, override with
 `PLINTH_CRYPTO_LIBS_HOME`), links them into the project at
 `dist-newstyle/crypto-libs/`, and writes
-`dist-newstyle/crypto-libs/env.sh`, which puts them on pkg-config's search
-path (`PKG_CONFIG_PATH`) — source it in every shell you build from (or add
-the export to your shell profile).
+`dist-newstyle/crypto-libs/env.sh`. Source that file in every shell you
+build from (or add its exports to your shell profile): it puts the
+libraries on pkg-config's search path (`PKG_CONFIG_PATH`) so cabal can find
+them at build time, and on the dynamic loader's path (`LD_LIBRARY_PATH`) so
+the executables you build can load them at run time — on Linux the latter
+is required, otherwise running them fails with
+*"libblst.so: cannot open shared object file"*.
 
 Nothing is installed system-wide; the cache is shared by all your Plinth
 projects, and it is the cache path (not the project path) that gets baked
