@@ -20,6 +20,10 @@ on:
   schedule:
     - cron: "0 4 * * 1"
 
+# Every job only ever reads the repository; nothing here writes to it.
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true

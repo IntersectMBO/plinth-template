@@ -36,11 +36,23 @@ if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
 fi
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/plinth-build-docker.XXXXXX")"
+
+# The container builds as root, so dist-newstyle/ ends up owned by root on
+# the host and a plain rm cannot remove it. Hand the files back through a
+# throwaway container before removing them, and never let a cleanup problem
+# fail an otherwise successful build.
 cleanup() {
   if [ "${PLINTH_CI_KEEP:-0}" = 1 ]; then
     echo "build-docker: scratch dir kept: $WORK"
-  else
-    rm -rf "$WORK"
+    return 0
+  fi
+  if rm -rf "$WORK" 2>/dev/null; then
+    return 0
+  fi
+  docker run --rm -v "$WORK:/scratch" "$IMAGE" \
+    chown -R "$(id -u):$(id -g)" /scratch >/dev/null 2>&1 || true
+  if ! rm -rf "$WORK"; then
+    echo "build-docker: warning: could not remove the scratch dir $WORK" >&2
   fi
 }
 trap cleanup EXIT
