@@ -1,12 +1,24 @@
 #!/usr/bin/env bash
 #
 # Build a GHC+Cabal project end-to-end with the host's ghc+cabal: create the
-# project with install.sh --env cabal --crypto-libs local (or take a
-# pre-created one as $1), which downloads the crypto C libraries into the
-# per-user cache, then run `cabal build all` with the generated env.sh
-# sourced (it points PKG_CONFIG_PATH at the libraries), generate the example
+# project with install.sh --env cabal (or take a pre-created one as the
+# positional argument), install the crypto C libraries, then run
+# `cabal build all` with pkg-config pointed at them, generate the example
 # blueprint and assert the produced executable links the crypto libraries
-# from the plinth cache.
+# from where they were installed and nowhere else.
+#
+# Both crypto-libs modes install.sh offers are testable:
+#
+#   --crypto-libs local   (default) libraries go into the per-user cache and
+#                         are linked into the project; the generated
+#                         dist-newstyle/crypto-libs/env.sh sets the paths.
+#   --crypto-libs system  libraries go into a --prefix (here a throwaway one
+#                         under the scratch dir, so no sudo and nothing
+#                         system-wide is touched); PKG_CONFIG_PATH and
+#                         LD_LIBRARY_PATH are set from that prefix, which is
+#                         what the installer tells such users to do.
+#
+# Usage: build-ghc-cabal.sh [--crypto-libs local|system] [PRE_CREATED_TREE]
 #
 # Requirements: ghc 9.6.x or 9.12.x, cabal >= 3.8, pkg-config, network.
 #
@@ -19,6 +31,20 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
+
+CRYPTO_MODE="local"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --crypto-libs) shift; CRYPTO_MODE="${1:?--crypto-libs needs an argument}" ;;
+    --crypto-libs=*) CRYPTO_MODE="${1#--crypto-libs=}" ;;
+    *) break ;;
+  esac
+  shift
+done
+case "$CRYPTO_MODE" in
+  local|system) ;;
+  *) echo "build-ghc-cabal: FAIL: --crypto-libs must be 'local' or 'system'" >&2; exit 1 ;;
+esac
 
 TREE="${1:-}"
 
@@ -59,12 +85,21 @@ note "cabal $(cabal --numeric-version) ($(command -v cabal))"
 # Fresh copy of the branch tree
 # --------------------------------------------------------------------------
 
+# A throwaway prefix inside the scratch dir: writable without sudo, and
+# removed with everything else on exit.
+SYSTEM_PREFIX="$WORK/crypto-prefix"
+
+note "crypto-libs mode: $CRYPTO_MODE"
+
 PROJECT="$WORK/project"
 if [ -z "$TREE" ]; then
-  if ! sh "$ROOT/install.sh" --env cabal --from "$ROOT" \
-         --dir "$PROJECT" --crypto-libs local >"$WORK/install.log" 2>&1; then
+  install_args=(--env cabal --from "$ROOT" --dir "$PROJECT" --crypto-libs "$CRYPTO_MODE")
+  if [ "$CRYPTO_MODE" = system ]; then
+    install_args+=(--prefix "$SYSTEM_PREFIX")
+  fi
+  if ! sh "$ROOT/install.sh" "${install_args[@]}" >"$WORK/install.log" 2>&1; then
     cat "$WORK/install.log" >&2
-    fail "install.sh --env cabal failed"
+    fail "install.sh --env cabal --crypto-libs $CRYPTO_MODE failed"
   fi
 else
   mkdir -p "$PROJECT"
@@ -75,21 +110,43 @@ if [ ! -f "$PROJECT/get-crypto-libs.sh" ]; then
 fi
 cd "$PROJECT"
 
-# install.sh (--crypto-libs local) already ran this; re-running is an
-# instant no-op re-link. For a pre-created tree ($1) it does the install.
-if ! ./get-crypto-libs.sh; then
-  fail "get-crypto-libs.sh failed"
+# For a pre-created tree ($TREE) the libraries were never installed, so do
+# it here. When install.sh created the project it already ran this; re-run
+# it in local mode only, where it is an instant re-link and proves the
+# advertised idempotence (a system re-run would re-download everything into
+# a fresh staging dir).
+if [ -n "$TREE" ] && [ "$CRYPTO_MODE" = system ]; then
+  if ! ./get-crypto-libs.sh --prefix "$SYSTEM_PREFIX"; then
+    fail "get-crypto-libs.sh --prefix failed"
+  fi
+fi
+if [ "$CRYPTO_MODE" = local ]; then
+  if ! ./get-crypto-libs.sh; then
+    fail "get-crypto-libs.sh failed"
+  fi
 fi
 
-# Source the generated env.sh so pkg-config resolves the libraries (this is
-# exactly what the README tells users to do).
-if [ ! -f dist-newstyle/crypto-libs/env.sh ]; then
-  fail "dist-newstyle/crypto-libs/env.sh was not created by get-crypto-libs.sh"
+# Point pkg-config (and, on Linux, the loader) at the libraries the same way
+# the installer's closing instructions tell the user to.
+if [ "$CRYPTO_MODE" = system ]; then
+  export PKG_CONFIG_PATH="$SYSTEM_PREFIX/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+  export LD_LIBRARY_PATH="$SYSTEM_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+  if [ ! -f "$SYSTEM_PREFIX/lib/pkgconfig/libsodium.pc" ]; then
+    fail "$SYSTEM_PREFIX/lib/pkgconfig/libsodium.pc missing after a system install"
+  fi
+  if [ -e dist-newstyle/crypto-libs ]; then
+    fail "system mode must not create dist-newstyle/crypto-libs in the project"
+  fi
+else
+  # Source the generated env.sh (exactly what the README tells users to do).
+  if [ ! -f dist-newstyle/crypto-libs/env.sh ]; then
+    fail "dist-newstyle/crypto-libs/env.sh was not created by get-crypto-libs.sh"
+  fi
+  # shellcheck source=/dev/null
+  . dist-newstyle/crypto-libs/env.sh
 fi
-# shellcheck source=/dev/null
-. dist-newstyle/crypto-libs/env.sh
 if ! pkg-config --exists libsodium libsecp256k1 libblst; then
-  fail "crypto libs not visible to pkg-config after sourcing env.sh"
+  fail "crypto libs not visible to pkg-config ($CRYPTO_MODE mode)"
 fi
 note "crypto libs: sodium $(pkg-config --modversion libsodium), secp256k1 $(pkg-config --modversion libsecp256k1), blst $(pkg-config --modversion libblst)"
 
@@ -122,16 +179,21 @@ if ! python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$WORK/blueprint
 fi
 note "blueprint OK: $(wc -c < "$WORK/blueprint.json" | tr -d ' ') bytes"
 
-# The libraries' real location is the per-user cache; PLINTH_CRYPTO_LIBS_HOME
-# overrides it (get-crypto-libs.sh defaults to .../plinth-crypto-libs).
-CRYPTO_MARKER="${PLINTH_CRYPTO_LIBS_HOME:-plinth-crypto-libs}"
+# Where the libraries the executable links must come from: the --prefix in
+# system mode, otherwise the per-user cache (PLINTH_CRYPTO_LIBS_HOME
+# overrides it; get-crypto-libs.sh defaults to .../plinth-crypto-libs).
+if [ "$CRYPTO_MODE" = system ]; then
+  CRYPTO_MARKER="$SYSTEM_PREFIX"
+else
+  CRYPTO_MARKER="${PLINTH_CRYPTO_LIBS_HOME:-plinth-crypto-libs}"
+fi
 
 bin="$("${cabal[@]}" list-bin exe:gen-auction-validator-blueprint)"
 case "$(uname -s)" in
   Darwin)
     links="$(otool -L "$bin")"
     if ! echo "$links" | grep -qF "$CRYPTO_MARKER"; then
-      fail "executable does not link crypto libs from the plinth cache ($CRYPTO_MARKER):
+      fail "executable does not link crypto libs from $CRYPTO_MARKER:
 $links"
     fi
     for bad in /nix/store /opt/homebrew "/usr/local/lib"; do
@@ -140,16 +202,16 @@ $links"
 $links"
       fi
     done
-    note "otool: crypto libs come from the plinth cache only"
+    note "otool: crypto libs come from $CRYPTO_MARKER only"
     ;;
   Linux)
     links="$(ldd "$bin" 2>/dev/null || true)"
     if echo "$links" | grep -E 'libsodium|libsecp256k1|libblst' | grep -vqF "$CRYPTO_MARKER"; then
-      fail "executable resolves crypto libs outside the plinth cache ($CRYPTO_MARKER):
+      fail "executable resolves crypto libs outside $CRYPTO_MARKER:
 $links"
     fi
-    note "ldd: crypto libs come from the plinth cache only (or are absent/static)"
+    note "ldd: crypto libs come from $CRYPTO_MARKER only (or are absent/static)"
     ;;
 esac
 
-echo "build-ghc-cabal: SUCCESS (ghc $GHC_VERSION)"
+echo "build-ghc-cabal: SUCCESS (ghc $GHC_VERSION, $CRYPTO_MODE crypto libs)"

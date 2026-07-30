@@ -12,6 +12,9 @@
 # nix-setup-guide) or the first run will build GHC from source.
 #
 # Environment:
+#   CABAL_STORE_DIR   Use a dedicated cabal store for the in-shell build
+#                     (passed as --store-dir); lets CI and repeated local
+#                     runs reuse compiled dependencies.
 #   PLINTH_CI_KEEP=1  Keep the scratch directory (printed) for inspection.
 
 set -euo pipefail
@@ -89,15 +92,22 @@ if ! nix develop "path:$PROJECT#$SHELL_NAME" --accept-flake-config --command bas
        fi
        note "crypto libs provided by the shell: sodium $(pkg-config --modversion libsodium), secp256k1 $(pkg-config --modversion libsecp256k1), blst $(pkg-config --modversion libblst)"
 
+       cabal=(cabal)
+       if [ -n "${CABAL_STORE_DIR:-}" ]; then
+         mkdir -p "$CABAL_STORE_DIR"
+         cabal+=(--store-dir="$CABAL_STORE_DIR")
+         note "using cabal store: $CABAL_STORE_DIR"
+       fi
+
        # Unconditional: the shell ships a stock cabal with no package index, and
        # cabal.project pins index-states for hackage and CHaP that must be
        # fetched first. Gating this on $CI made local runs fail in cabal build.
        note "running cabal update"
-       cabal update
+       "${cabal[@]}" update
 
        note "building (cabal build all)..."
-       cabal build all
-       cabal run -v0 exe:gen-auction-validator-blueprint -- blueprint.json
+       "${cabal[@]}" build all
+       "${cabal[@]}" run -v0 exe:gen-auction-validator-blueprint -- blueprint.json
        if [ ! -s blueprint.json ]; then
          echo "build-nix(shell): FAIL: empty blueprint" >&2
          exit 1

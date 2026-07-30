@@ -48,7 +48,10 @@ if [ "${PLINTH_SKIP_HEAVY:-0}" = 1 ]; then
   skip_step "build-docker"    "PLINTH_SKIP_HEAVY=1"
 else
   if command -v ghc >/dev/null 2>&1 && command -v cabal >/dev/null 2>&1; then
-    run_step "build-ghc-cabal" .github/ci/build-ghc-cabal.sh
+    run_step "build-ghc-cabal (local crypto libs)" \
+      .github/ci/build-ghc-cabal.sh --crypto-libs local
+    run_step "build-ghc-cabal (system crypto libs)" \
+      .github/ci/build-ghc-cabal.sh --crypto-libs system
   else
     skip_step "build-ghc-cabal" "no ghc/cabal on PATH"
   fi
