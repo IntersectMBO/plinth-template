@@ -59,7 +59,7 @@ trap cleanup EXIT
 
 PROJECT="$WORK/project"
 if [ -z "$TREE" ]; then
-  if ! sh "$ROOT/install.sh" --yes --env docker --docker-mode standalone --from "$ROOT" \
+  if ! sh "$ROOT/install.sh" --env docker --docker-mode standalone --from "$ROOT" \
          --dir "$PROJECT" >"$WORK/install.log" 2>&1; then
     cat "$WORK/install.log" >&2
     fail "install.sh --env docker failed"

@@ -8,13 +8,13 @@
 # https://github.com/IntersectMBO/plinth-template. It asks which development
 # environment you want (Nix, Docker, Demeter, or plain GHC+Cabal), verifies
 # the required tools are installed, then creates a fresh project directory
-# containing just the files that environment needs (selected from the
+# containing just the files that environment needs (copied from the
 # repository's template/ directory) and — for the GHC+Cabal environment —
 # optionally installs the Cardano crypto C libraries.
 #
-# Non-interactive use (all prompts have flags; --yes accepts defaults):
+# Every question has a flag; pass them all for non-interactive use:
 #
-#   sh install.sh --env cabal --dir my-project --crypto-libs local --yes
+#   sh install.sh --env cabal --dir my-project --crypto-libs local
 #
 # Flags:
 #   --env ENV           nix | docker | demeter | cabal
@@ -22,29 +22,34 @@
 #   --crypto-libs MODE  local | system | skip                   (with --env cabal)
 #   --prefix DIR        prefix for --crypto-libs system (default /usr/local)
 #   --dir NAME          project directory to create (default: my-plinth-project)
-#   --repo URL          template repository (default: official plinth-template)
-#   --from DIR          take the template from a local directory instead of
-#                       fetching it (offline installs, CI)
-#   --yes, -y           don't ask; use defaults for unanswered questions
+#   --repo URL          template repository on github.com (default: the
+#                       official plinth-template)
+#   --from DIR          take the template from a local checkout instead of
+#                       downloading it (offline installs, CI)
 #   --help, -h          this text
-#
-# Environment variables:
-#   PLINTH_TEMPLATE_REPO   same as --repo
-#   NO_COLOR               disable colored output
 #
 # POSIX sh; no bashisms. The entire logic lives in functions and the last
 # line is `main "$@"`, so a partially downloaded script executes nothing.
 
 set -eu
 
-REPO_DEFAULT="https://github.com/IntersectMBO/plinth-template"
+GHC_SERIES_A="9.6"
+GHC_SERIES_B="9.12"
+GHC_SERIES_A_NIX="ghc96"
+GHC_SERIES_B_NIX="ghc912"
+GHC_RECOMMENDED="9.6.7"
+
+CABAL_MIN="3.8"
+CABAL_RECOMMENDED="3.12"
+CABAL_OLD_SERIES_A="[012].*"
+CABAL_OLD_SERIES_B="3.[0246].*"
 
 # ---------------------------------------------------------------------------
 # Output helpers
 # ---------------------------------------------------------------------------
 
 setup_colors() {
-  if [ -t 2 ] && [ "${TERM:-dumb}" != dumb ] && [ -z "${NO_COLOR:-}" ]; then
+  if [ -t 2 ] && [ "${TERM:-dumb}" != dumb ]; then
     BOLD="$(printf '\033[1m')"
     DIM="$(printf '\033[2m')"
     RED="$(printf '\033[31m')"
@@ -59,87 +64,35 @@ setup_colors() {
 
 say()  { printf '%s\n' "$*" >&2; }
 info() { printf '%s\n' "${CYAN}==>${RESET} ${BOLD}$*${RESET}" >&2; }
-ok()   { printf '%s\n' "${GREEN} ok${RESET} $*" >&2; }
+ok()   { printf '%s\n' "${GREEN}ok:${RESET} $*" >&2; }
 warn() { printf '%s\n' "${YELLOW}warning:${RESET} $*" >&2; }
 die()  { printf '%s\n' "${RED}error:${RESET} $*" >&2; exit 1; }
 
-have() { command -v "$1" >/dev/null 2>&1; }
+# quietly CMD...: silence stderr, keeping stdout.
+# silently CMD...: silence both streams, for commands run purely for their
+# exit status.
+quietly() { "$@" 2>/dev/null; }
+silently() { "$@" >/dev/null 2>&1; }
 
-# On a fresh macOS, /usr/bin/git is the Xcode CLT stub: it exists but every
-# invocation pops the "install developer tools" dialog and fails. Only treat
-# git as available when it actually runs.
-git_works() {
-  if ! have git; then
-    return 1
-  fi
-  git --version >/dev/null 2>&1
-}
+# tool_path NAME -> stdout: the resolved path of NAME, as `which` would
+# print it (also the presence test the `have` predicate is built on).
+tool_path() { command -v "$1"; }
 
-# The shell does not expand ~ in `read` answers or in flag values that were
-# quoted; do it ourselves for everything used as a path.
-expand_tilde() {
-  # shellcheck disable=SC2088 # matching a LITERAL ~ the shell didn't expand
-  case "$1" in
-    "~") printf '%s' "$HOME" ;;
-    "~/"*) printf '%s/%s' "$HOME" "${1#"~"/}" ;;
-    *) printf '%s' "$1" ;;
-  esac
-}
+have() { silently tool_path "$1"; }
 
-# expand_tilde + absolutize, for paths echoed back as export lines.
-normalize_path() {
-  _p="$(expand_tilde "$1")"
-  case "$_p" in
-    /*) printf '%s' "$_p" ;;
-    *) printf '%s/%s' "$PWD" "$_p" ;;
-  esac
-}
+# report_tool NAME VERSION: "ok: ghc 9.6.7 (/path/to/ghc)"
+report_tool() { ok "$1 $2 ($(tool_path "$1"))"; }
 
 # ---------------------------------------------------------------------------
-# Interaction. When the script is piped into sh (`curl ... | sh`) stdin is the
-# script itself, so questions are read from /dev/tty instead. With --yes, or
-# when no terminal is available at all, defaults are used. Answers are read
-# from fd 3. PLINTH_INSTALL_TTY overrides the answer source (used by the CI
-# tests to feed scripted answers).
+# Interaction. Questions are read from /dev/tty: when the script is piped
+# into sh (`curl ... | sh`) stdin is the script itself. Every question has a
+# flag, so with no terminal the flags are the way to answer.
 # ---------------------------------------------------------------------------
 
-INTERACTIVE=0
-
-setup_input() {
-  if [ "$ASSUME_YES" = 1 ]; then
-    return 0
-  fi
-  # Test hook: pretend no terminal is available.
-  if [ -n "${PLINTH_INSTALL_NO_TTY:-}" ]; then
-    return 0
-  fi
-  if [ -n "${PLINTH_INSTALL_TTY:-}" ]; then
-    if [ ! -r "$PLINTH_INSTALL_TTY" ]; then
-      die "cannot read from PLINTH_INSTALL_TTY=$PLINTH_INSTALL_TTY"
-    fi
-    exec 3< "$PLINTH_INSTALL_TTY"
-    INTERACTIVE=1
-  elif [ -t 0 ]; then
-    exec 3<&0
-    INTERACTIVE=1
-  elif (exec < /dev/tty) 2>/dev/null; then
-    exec 3< /dev/tty
-    INTERACTIVE=1
-  fi
-}
-
-# ask PROMPT DEFAULT -> stdout: the answer (DEFAULT when non-interactive,
-# empty input, or EOF).
+# ask PROMPT DEFAULT -> stdout: the answer (DEFAULT on empty input).
 ask() {
-  if [ "$INTERACTIVE" = 0 ]; then
-    printf '%s' "$2"
-    return 0
-  fi
   printf '%s [%s]: ' "${BOLD}$1${RESET}" "$2" >&2
-  ans=""
-  if ! read -r ans <&3; then
-    ans=""
-  fi
+  read -r ans < /dev/tty
   if [ -z "$ans" ]; then
     ans="$2"
   fi
@@ -155,29 +108,19 @@ confirm() {
   esac
 }
 
-# choose DEFAULT_NUMBER N -> stdout: chosen number (1..N). The caller prints
-# the menu beforehand.
+# choose DEFAULT N -> stdout: the chosen menu entry, a single digit 1..N.
+# The caller prints the menu beforehand.
 choose() {
   while :; do
-    ans="$(ask "Enter a number (1-$2)" "$1")"
-    case "$ans" in
-      *[!0-9]*|'') ;;
-      *)
-        # Strip leading zeros so '04' dispatches like '4': the callers match
-        # this result with a string case that has no default branch, and
-        # $((ans)) is no help here because it would read '08' as octal.
-        while :; do
-          case "$ans" in
-            0?*) ans="${ans#0}" ;;
-            *) break ;;
-          esac
-        done
-        if [ "$ans" -ge 1 ] && [ "$ans" -le "$2" ]; then printf '%s' "$ans"; return 0; fi
+    n="$(ask "Enter a number (1-$2)" "$1")"
+    case "$n" in
+      [1-9])
+        if [ "$n" -le "$2" ]; then
+          printf '%s' "$n"
+          return 0
+        fi
         ;;
     esac
-    if [ "$INTERACTIVE" != 1 ]; then
-      die "invalid default answer '$ans'"
-    fi
     warn "please answer with a number between 1 and $2"
   done
 }
@@ -192,12 +135,12 @@ detect_platform() {
   case "$(uname -s)" in
     Darwin) ;;
     Linux)
-      if grep -qi microsoft /proc/version 2>/dev/null; then IS_WSL=1; fi
+      if quietly grep -qi microsoft /proc/version; then IS_WSL=1; fi
       ;;
     MINGW*|MSYS*|CYGWIN*)
       die "native Windows is not supported by this installer.
-Install WSL2 (https://learn.microsoft.com/windows/wsl/install) and run the
-installer again from your WSL shell."
+  Install WSL2 (https://learn.microsoft.com/windows/wsl/install) and run the
+  installer again from your WSL shell."
       ;;
     *)
       warn "unrecognized platform '$(uname -s)'; continuing as if it were Linux"
@@ -209,32 +152,39 @@ installer again from your WSL shell."
 # Per-environment tool checks
 # ---------------------------------------------------------------------------
 
+nix_experimental_features() {
+  if ! quietly nix config show experimental-features; then
+    quietly nix show-config | sed -n 's/^experimental-features = //p'
+  fi
+}
+
+nix_has_flakes() {
+  case " $(nix_experimental_features) " in
+    *" flakes "*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+nix_version() { quietly nix --version | sed 's/^nix (Nix) //'; }
+
 check_nix() {
   if ! have nix; then
     die "nix is not installed.
-Follow https://github.com/input-output-hk/iogx/blob/main/doc/nix-setup-guide.md
-to install AND configure it (the configuration step sets up IOG's binary
-caches — without them the first build compiles GHC from source and takes
-hours), then run this installer again."
+  Follow https://github.com/input-output-hk/iogx/blob/main/doc/nix-setup-guide.md
+  to install AND configure it (the configuration step sets up IOG's binary
+  caches — without them the first build compiles GHC from source and takes
+  hours), then run this installer again."
   fi
-  if ! feats="$(
-         if ! nix config show experimental-features 2>/dev/null; then
-           nix show-config 2>/dev/null | sed -n 's/^experimental-features = //p'
-         fi
-       )"; then
-    feats=""
+  if nix_has_flakes; then
+    ok "nix $(nix_version) with flakes enabled"
+  else
+    warn "could not confirm that nix flakes are enabled. If 'nix develop' fails, add
+  'experimental-features = nix-command flakes' to your nix.conf."
   fi
-  case " $feats " in
-    *" flakes "*) ok "nix $(nix --version 2>/dev/null | sed 's/^nix (Nix) //') with flakes enabled" ;;
-    *)
-      warn "could not confirm that nix flakes are enabled. If 'nix develop'
-fails, add 'experimental-features = nix-command flakes' to your nix.conf
-(see https://github.com/input-output-hk/iogx/blob/main/doc/nix-setup-guide.md)."
-      ;;
-  esac
-  warn "make sure IOG's binary caches are configured (cache.iog.io); the
-nix-setup-guide linked above explains how. Without them the first
-'nix develop' builds GHC from source."
+  say ""
+  warn "make sure IOG's binary caches are configured (cache.iog.io); this guide
+  explains how: https://github.com/input-output-hk/iogx/blob/main/doc/nix-setup-guide.md.
+  Without them the first 'nix develop' builds GHC from source."
 }
 
 check_docker() {
@@ -246,10 +196,10 @@ check_docker() {
     devcontainer|standalone)
       if ! have docker; then
         die "docker is not installed (https://docs.docker.com/get-docker/).
-On Windows, install Docker on the native OS, not inside a VM
-(https://docs.docker.com/desktop/setup/vm-vdi/)."
+  On Windows, install Docker on the native OS, not inside a VM
+  (https://docs.docker.com/desktop/setup/vm-vdi/)."
       fi
-      if docker info >/dev/null 2>&1; then
+      if silently docker info; then
         ok "docker daemon is running"
       else
         warn "docker is installed but the daemon does not respond; start Docker before building."
@@ -265,67 +215,46 @@ check_demeter() {
   say "Demeter (https://demeter.run) is a hosted platform; nothing to check locally."
 }
 
-# ver_ge A B: true when major.minor of A >= major.minor of B
-ver_ge() {
-  a_major=${1%%.*}; a_rest=${1#*.}; a_minor=${a_rest%%.*}
-  b_major=${2%%.*}; b_rest=${2#*.}; b_minor=${b_rest%%.*}
-  case "$a_major$a_minor" in *[!0-9]*) return 1 ;; esac
-  if [ "$a_major" -gt "$b_major" ]; then
-    return 0
-  fi
-  if [ "$a_major" -eq "$b_major" ] && [ "$a_minor" -ge "$b_minor" ]; then
-    return 0
-  fi
-  return 1
-}
-
 check_cabal_env() {
   if ! have ghc; then
-    die "ghc not found on PATH. Plinth supports GHC 9.6.x and 9.12.x.
-Install one with ghcup (https://www.haskell.org/ghcup/):
-  ghcup install ghc 9.6.7 && ghcup set ghc 9.6.7"
+    die "ghc not found on PATH. Plinth supports GHC $GHC_SERIES_A.x and $GHC_SERIES_B.x.
+  Install one with ghcup (https://www.haskell.org/ghcup/):
+  ghcup install ghc $GHC_RECOMMENDED && ghcup set ghc $GHC_RECOMMENDED"
   fi
   ghc_version="$(ghc --numeric-version)"
   case "$ghc_version" in
-    9.6.*|9.12.*) ok "ghc $ghc_version ($(command -v ghc))" ;;
-    *) die "unsupported GHC version $ghc_version: Plinth supports 9.6.x and 9.12.x.
-Switch with ghcup, e.g.: ghcup install ghc 9.6.7 && ghcup set ghc 9.6.7" ;;
+    $GHC_SERIES_A.*|$GHC_SERIES_B.*)
+      report_tool ghc "$ghc_version"
+      ;;
+    *)
+      die "unsupported GHC version $ghc_version: Plinth supports $GHC_SERIES_A.x and $GHC_SERIES_B.x.
+  Switch with ghcup, e.g.: ghcup install ghc $GHC_RECOMMENDED && ghcup set ghc $GHC_RECOMMENDED"
+      ;;
   esac
 
   if ! have cabal; then
-    die "cabal not found on PATH. Install it with ghcup:
-  ghcup install cabal latest && ghcup set cabal latest"
+    die "cabal not found on PATH. Install it with ghcup: ghcup install cabal latest && ghcup set cabal latest"
   fi
   cabal_version="$(cabal --numeric-version)"
-  if ! ver_ge "$cabal_version" 3.8; then
-    die "cabal $cabal_version is too old: 3.8 or newer is required (3.12+ recommended).
-Upgrade with: ghcup install cabal latest && ghcup set cabal latest"
-  fi
-  ok "cabal $cabal_version ($(command -v cabal))"
+  # shellcheck disable=SC2254 # these constants ARE globs; matching as globs
+  # is the point
+  case "$cabal_version" in
+    $CABAL_OLD_SERIES_A|$CABAL_OLD_SERIES_B)
+      die "cabal $cabal_version is too old: $CABAL_MIN or newer is required ($CABAL_RECOMMENDED+ recommended).
+  Upgrade with: ghcup install cabal latest && ghcup set cabal latest"
+      ;;
+  esac
+  report_tool cabal "$cabal_version"
 
   if ! have pkg-config; then
-    die "pkg-config not found on PATH; the project uses it to
-locate the crypto C libraries. Install it with:
-  macOS:         brew install pkgconf
-  Debian/Ubuntu: sudo apt install pkg-config"
+    die "pkg-config not found on PATH; the project uses it to locate the crypto C libraries.
+  Install it with:  brew install pkgconf  (macOS)  or  sudo apt install pkg-config  (Debian/Ubuntu)"
   fi
-  ok "pkg-config $(pkg-config --version) ($(command -v pkg-config))"
+  report_tool pkg-config "$(pkg-config --version)"
 
   if ! have curl; then
     die "curl is required (to download the crypto C libraries)"
   fi
-}
-
-# Quiet probe used only to pick a sensible default menu entry.
-cabal_env_looks_ready() {
-  if ! have ghc || ! have cabal || ! have pkg-config; then
-    return 1
-  fi
-  case "$(ghc --numeric-version 2>/dev/null)" in
-    9.6.*|9.12.*) ;;
-    *) return 1 ;;
-  esac
-  ver_ge "$(cabal --numeric-version 2>/dev/null)" 3.8
 }
 
 # ---------------------------------------------------------------------------
@@ -334,7 +263,7 @@ cabal_env_looks_ready() {
 
 detected_default_env() {
   if have nix; then echo nix
-  elif cabal_env_looks_ready; then echo cabal
+  elif have cabal; then echo cabal
   elif have docker; then echo docker
   else echo nix
   fi
@@ -344,16 +273,8 @@ mark() { # mark CMD: "(detected)" suffix for menu lines
   if have "$1"; then printf '%s' " ${GREEN}(detected)${RESET}"; fi
 }
 
+# select_env -> stdout: nix | docker | demeter | cabal
 select_env() {
-  if [ -n "$ENV_CHOICE" ]; then
-    return 0
-  fi
-  if [ "$INTERACTIVE" = 0 ]; then
-    ENV_CHOICE="$(detected_default_env)"
-    info "No answers available (--yes / no terminal): using environment '$ENV_CHOICE' (override with --env)"
-    return 0
-  fi
-  default_env="$(detected_default_env)"
   say ""
   info "Which development environment do you want to use?"
   say ""
@@ -362,33 +283,22 @@ select_env() {
   say "  3) Demeter    ${DIM}hosted cloud workspace at https://demeter.run${RESET}"
   say "  4) GHC+Cabal  ${DIM}your own ghc/cabal from ghcup, no nix, no docker${RESET}$(mark ghc)"
   say ""
-  case "$default_env" in
+  case "$(detected_default_env)" in
     nix) default_n=1 ;;
     docker) default_n=2 ;;
     demeter) default_n=3 ;;
     cabal) default_n=4 ;;
   esac
-  n="$(choose "$default_n" 4)"
-  case "$n" in
-    1) ENV_CHOICE=nix ;;
-    2) ENV_CHOICE=docker ;;
-    3) ENV_CHOICE=demeter ;;
-    4) ENV_CHOICE=cabal ;;
+  case "$(choose "$default_n" 4)" in
+    1) echo nix ;;
+    2) echo docker ;;
+    3) echo demeter ;;
+    4) echo cabal ;;
   esac
 }
 
+# select_docker_mode -> stdout: devcontainer | codespaces | standalone
 select_docker_mode() {
-  if [ "$ENV_CHOICE" != docker ]; then
-    return 0
-  fi
-  if [ -n "$DOCKER_MODE" ]; then
-    return 0
-  fi
-  if [ "$INTERACTIVE" = 0 ]; then
-    DOCKER_MODE=devcontainer
-    info "Using default docker mode 'devcontainer' (override with --docker-mode)"
-    return 0
-  fi
   say ""
   info "How do you want to run the Docker environment?"
   say ""
@@ -396,11 +306,10 @@ select_docker_mode() {
   say "  2) Codespaces    ${DIM}run it on GitHub's cloud, in the browser${RESET}"
   say "  3) Standalone    ${DIM}plain 'docker run' with the project mounted${RESET}"
   say ""
-  n="$(choose 1 3)"
-  case "$n" in
-    1) DOCKER_MODE=devcontainer ;;
-    2) DOCKER_MODE=codespaces ;;
-    3) DOCKER_MODE=standalone ;;
+  case "$(choose 1 3)" in
+    1) echo devcontainer ;;
+    2) echo codespaces ;;
+    3) echo standalone ;;
   esac
 }
 
@@ -435,18 +344,8 @@ explain_crypto_libs() {
   esac
 }
 
+# select_crypto_mode -> stdout: local | system | skip
 select_crypto_mode() {
-  if [ "$ENV_CHOICE" != cabal ]; then
-    return 0
-  fi
-  if [ -n "$CRYPTO_MODE" ]; then
-    return 0
-  fi
-  if [ "$INTERACTIVE" = 0 ]; then
-    CRYPTO_MODE=local
-    info "Using default crypto-libs mode 'local' (override with --crypto-libs)"
-    return 0
-  fi
   say ""
   info "How do you want to install the crypto C libraries?"
   say ""
@@ -455,26 +354,20 @@ select_crypto_mode() {
   say "  2) System-wide    ${DIM}into a prefix such as /usr/local (may need sudo)${RESET}"
   say "  3) Skip           ${DIM}install them yourself later${RESET}"
   say ""
-  n="$(choose 1 3)"
-  case "$n" in
-    1) CRYPTO_MODE=local ;;
-    2) CRYPTO_MODE=system ;;
-    3) CRYPTO_MODE=skip ;;
+  case "$(choose 1 3)" in
+    1) echo local ;;
+    2) echo system ;;
+    3) echo skip ;;
   esac
 }
 
 install_crypto_libs() {
-  if [ "$ENV_CHOICE" != cabal ]; then
-    return 0
-  fi
   case "$CRYPTO_MODE" in
     local)
       say ""
       info "Installing the crypto C libraries (per-user cache, linked into the project)"
       if ! "$TARGET_DIR/get-crypto-libs.sh"; then
-        die "crypto library installation failed; you can retry later with:
-  cd $TARGET_DIR
-  ./get-crypto-libs.sh"
+        die "crypto library installation failed; retry later with: cd $TARGET_DIR; ./get-crypto-libs.sh"
       fi
       say ""
       say "  ${YELLOW}Note:${RESET} the project only holds a link (dist-newstyle/crypto-libs) to"
@@ -483,22 +376,24 @@ install_crypto_libs() {
       say "  ./get-crypto-libs.sh re-links instantly, nothing is re-downloaded."
       ;;
     system)
-      prefix="$(normalize_path "$(ask "Install prefix" "$CRYPTO_PREFIX")")"
+      if [ -z "$CRYPTO_PREFIX" ]; then
+        CRYPTO_PREFIX="$(ask "Install prefix" "/usr/local")"
+      fi
       say ""
-      info "Installing the crypto C libraries into $prefix"
-      if mkdir -p "$prefix/lib" "$prefix/include" 2>/dev/null && [ -w "$prefix/lib" ]; then
-        if ! "$TARGET_DIR/get-crypto-libs.sh" --prefix "$prefix"; then
+      info "Installing the crypto C libraries into $CRYPTO_PREFIX"
+      if quietly mkdir -p "$CRYPTO_PREFIX/lib" "$CRYPTO_PREFIX/include" && [ -w "$CRYPTO_PREFIX/lib" ]; then
+        if ! "$TARGET_DIR/get-crypto-libs.sh" --prefix "$CRYPTO_PREFIX"; then
           die "crypto library installation failed"
         fi
-      elif [ "$INTERACTIVE" = 1 ] && confirm "$prefix is not writable; use sudo?" n; then
-        if ! sudo "$TARGET_DIR/get-crypto-libs.sh" --prefix "$prefix"; then
+      elif confirm "$CRYPTO_PREFIX is not writable; use sudo?" n; then
+        if ! sudo "$TARGET_DIR/get-crypto-libs.sh" --prefix "$CRYPTO_PREFIX"; then
           die "crypto library installation failed"
         fi
       else
-        die "$prefix is not writable. Rerun the installation yourself with:
-  sudo $TARGET_DIR/get-crypto-libs.sh --prefix $prefix"
+        die "$CRYPTO_PREFIX is not writable. Rerun the installation yourself with:
+  sudo $TARGET_DIR/get-crypto-libs.sh --prefix $CRYPTO_PREFIX"
       fi
-      SYSTEM_CRYPTO_PREFIX="$prefix"
+      SYSTEM_CRYPTO_PREFIX="$CRYPTO_PREFIX"
       ;;
     skip)
       say ""
@@ -512,202 +407,86 @@ install_crypto_libs() {
 }
 
 # ---------------------------------------------------------------------------
-# Cloning
+# Fetching the template
 # ---------------------------------------------------------------------------
 
-# fetch_tarball DIR: download a github.com tarball of the repository's
-# default branch into DIR. Extracts into a sibling temp dir first so a
-# failure never leaves a half-created DIR behind. Both live inside the
-# caller's private 0700 work directory, so the predictable name is not
-# exposed to other users on the system.
+# fetch_tarball DIR: download and extract the repository tarball into DIR.
 fetch_tarball() {
-  case "$REPO" in
-    https://github.com/*) ;;
-    *) return 1 ;;
-  esac
-  slug="${REPO#https://github.com/}"; slug="${slug%.git}"; slug="${slug%/}"
-  _tmp="$1.download.$$"
-  mkdir -p "$_tmp"
-  if curl -fsSL --proto '=https' --tlsv1.2 \
-       "https://codeload.github.com/$slug/tar.gz/HEAD" \
-       | tar -xzf - --strip-components=1 -C "$_tmp"; then
-    mv "$_tmp" "$1"
-  else
-    rm -rf "$_tmp"
-    return 1
-  fi
+  curl -fsSL --proto '=https' --tlsv1.2 \
+    "https://codeload.github.com/IntersectMBO/plinth-template/tar.gz/HEAD" \
+    | tar -xzf - --strip-components=1 -C "$1"
 }
-
-# The repository's template/ directory carries the union of every
-# environment's project files. fetch_source obtains a copy of the repository
-# (git clone, tarball, or a local directory via --from) and create_project
-# copies just the template files the chosen environment needs into the new
-# project directory.
 
 SRC_DIR=""
 SRC_CLEANUP=""
 
 fetch_source() {
   if [ -n "$FROM_DIR" ]; then
-    if [ ! -d "$FROM_DIR" ]; then
-      die "--from: '$FROM_DIR' is not a directory"
-    fi
-    SRC_DIR="$(cd "$FROM_DIR" && pwd)"
-    if [ ! -f "$SRC_DIR/template/plinth-template.cabal" ]; then
-      die "--from: '$FROM_DIR' does not look like a plinth-template checkout"
-    fi
+    SRC_DIR="$FROM_DIR"
     return 0
   fi
-  say ""
-  info "Fetching $REPO"
-  # Work *inside* the directory mktemp created (mode 0700, created
-  # exclusively) rather than deleting it to hand its name to git clone:
-  # removing it would publish the path, and since git clones happily into an
-  # existing empty directory, another local user on a shared /tmp could
-  # recreate it first and own the tree this installer copies from — and then
-  # runs, e.g. get-crypto-libs.sh.
-  _src_work="$(mktemp -d "${TMPDIR:-/tmp}/plinth-template-src.XXXXXX")"
-  SRC_CLEANUP="$_src_work"
-  SRC_DIR="$_src_work/repo"
-  if git_works; then
-    if git clone --quiet --depth 1 --single-branch "$REPO" "$SRC_DIR"; then
-      return 0
-    fi
-    warn "git clone failed; trying a tarball download instead"
-    # A failed clone can still leave the destination behind (git's own
-    # "clone succeeded, but checkout failed" path). fetch_tarball's closing mv
-    # would then nest the extracted tree inside $SRC_DIR instead of becoming
-    # it, and create_project would report a bogus "template drift".
-    rm -rf "$SRC_DIR"
+  if ! have curl; then
+    die "curl is required to download the template"
   fi
+  say ""
+  info "Fetching github.com/IntersectMBO/plinth-template"
+  SRC_CLEANUP="$(mktemp -d)"
+  SRC_DIR="$SRC_CLEANUP/repo"
+  mkdir -p "$SRC_DIR"
   if ! fetch_tarball "$SRC_DIR"; then
-    die "could not fetch $REPO
-(the tarball fallback only works for github.com repositories)"
+    die "could not download github.com/IntersectMBO/plinth-template"
   fi
 }
 
-# list_source_files: relative paths of the template files, one per line.
-# Inside a git checkout (--from on a working tree) this respects .gitignore,
-# so build artifacts never leak into the new project. `.git` may be a FILE
-# (worktrees), hence -e, and the find fallback must skip it by name.
-#
-# The fallback (a ZIP download, or any source that is not a work tree) has no
-# .gitignore machinery available, so it prunes the same paths template/.gitignore
-# lists: a source tree that was built in once would otherwise ship its
-# dist-newstyle/ and cabal.project.local into every new project.
-list_source_files() {
-  if [ -e "$SRC_DIR/.git" ] && git_works \
-     && git -C "$SRC_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    git -C "$SRC_DIR" ls-files --cached --others --exclude-standard
-  else
-    (
-      if ! cd "$SRC_DIR"; then exit 1; fi
-      find . \
-        \( -name .git -o -name dist-newstyle -o -name result \) -prune -o \
-        -type f \
-        ! -name .pre-commit-config.yaml \
-        ! -name validator.uplc \
-        ! -name blueprint.json \
-        ! -name cabal.project.freeze \
-        ! -name cabal.project.local \
-        -print | sed 's|^\./||'
-    )
-  fi
-}
-
-# include_file ENV PATH: 0 when PATH (relative to template/) belongs in an
-# ENV project.
-include_file() {
-  case "$2" in
-    # one of these becomes the project README instead (see create_project)
-    readmes/*) return 1 ;;
-  esac
-  case "$1" in
-    nix|demeter)
-      case "$2" in .devcontainer/*) return 1 ;; esac ;;
-    docker)
-      case "$2" in nix/*|flake.nix|flake.lock) return 1 ;; esac ;;
-    cabal)
-      case "$2" in nix/*|flake.nix|flake.lock|.devcontainer/*) return 1 ;; esac ;;
-  esac
-  return 0
-}
-
+# create_project ENV DIR: copy the template files ENV needs into DIR.
 create_project() {
-  # $1 = env, $2 = target dir
+  env="$1"
+  dir="$2"
+
   say ""
-  info "Creating $2 ($1 project)"
+  info "Creating $dir ($env project)"
+  say "" 
 
-  files_list="$(mktemp "${TMPDIR:-/tmp}/plinth-files.XXXXXX")"
-  list_source_files > "$files_list"
-  mkdir -p "$2"
-  copied=0
-  while IFS= read -r f; do
-    # only template/ content goes into projects; everything else in the
-    # repository (installer, CI, meta files) never does
-    case "$f" in
-      template/*) rel="${f#template/}" ;;
-      *) continue ;;
-    esac
-    if [ ! -f "$SRC_DIR/$f" ]; then
-      continue
-    fi
-    if ! include_file "$1" "$rel"; then
-      continue
-    fi
-    case "$rel" in
-      */*) mkdir -p "$2/${rel%/*}" ;;
-    esac
-    cp -p "$SRC_DIR/$f" "$2/$rel"
-    copied=$((copied + 1))
-  done < "$files_list"
-  rm -f "$files_list"
-  if [ "$copied" -eq 0 ]; then
-    die "template drift: no files found under template/"
-  fi
+  mkdir -p "$dir"
+  src="$SRC_DIR/template"
+  cp -r "$src/cabal.project"         "$dir"
+  cp -r "$src/plinth-template.cabal" "$dir"
+  cp -r "$src/app"                   "$dir"
+  cp -r "$src/src"                   "$dir"
 
-  # Environment-specific README
-  case "$1" in
-    cabal) _readme="ghc-cabal" ;;
-    *) _readme="$1" ;;
+  case "$env" in
+    nix)
+      cp -r "$src/nix"         "$dir"
+      cp "$src/flake.lock"     "$dir"
+      cp "$src/flake.nix"      "$dir"
+      cp "$src/readmes/nix.md" "$dir/README.md"
+      ;;
+    demeter)
+      cp -r "$src/nix"             "$dir"
+      cp "$src/flake.lock"         "$dir"
+      cp "$src/flake.nix"          "$dir"
+      cp "$src/readmes/demeter.md" "$dir/README.md"
+      ;;
+    docker)
+      cp -r "$src/.devcontainer"  "$dir"
+      cp "$src/readmes/docker.md" "$dir/README.md"
+      ;;
+    cabal)
+      # get-crypto-libs.sh sits next to install.sh in the repository, not in
+      # template/; cp -p keeps its executable bit.
+      cp -p "$SRC_DIR/get-crypto-libs.sh" "$dir"
+      cp "$src/readmes/ghc-cabal.md"      "$dir/README.md"
+      ;;
   esac
-  if [ ! -f "$SRC_DIR/template/readmes/$_readme.md" ]; then
-    die "template drift: template/readmes/$_readme.md missing from the template"
-  fi
-  cp "$SRC_DIR/template/readmes/$_readme.md" "$2/README.md"
 
-  # GHC+Cabal projects also carry the crypto-libs installer (it lives next
-  # to install.sh in the repository, at the project root once copied).
-  if [ "$1" = cabal ]; then
-    if [ ! -f "$SRC_DIR/get-crypto-libs.sh" ]; then
-      die "template drift: get-crypto-libs.sh missing from the repository"
-    fi
-    cp -p "$SRC_DIR/get-crypto-libs.sh" "$2/get-crypto-libs.sh"
-    chmod +x "$2/get-crypto-libs.sh"
-  fi
-
-  # Fresh history: this is a template, not a fork.
-  if git_works; then
-    if ! (
-        if ! cd "$2"; then exit 1; fi
-        if ! git init -q -b main 2>/dev/null; then git init -q; fi
-      ); then
-      warn "git init failed"
-    fi
-    ok "project created in $2 (fresh git history — make your first commit when ready)"
-  else
-    ok "project created in $2"
-  fi
+  ok "project created in $dir"
 }
-
-# ---------------------------------------------------------------------------
-# Next steps
-# ---------------------------------------------------------------------------
 
 next_steps() {
   say ""
   info "All set! Next steps"
   say ""
+
   case "$ENV_CHOICE" in
     nix)
       say "  cd $TARGET_DIR"
@@ -715,36 +494,36 @@ next_steps() {
       say "  cabal update         ${DIM}# first time only: fetches the hackage and CHaP indexes${RESET}"
       say "  cabal build all      ${DIM}# builds the example auction validator${RESET}"
       say ""
-      say "  ${DIM}GHC 9.6 is the default; 'nix develop .#ghc912' gives you GHC 9.12.${RESET}"
+      say "  ${DIM}GHC $GHC_SERIES_A is the default (same as 'nix develop .#$GHC_SERIES_A_NIX');"
+      say "  'nix develop .#$GHC_SERIES_B_NIX' gives you GHC $GHC_SERIES_B.${RESET}"
       ;;
     docker)
       case "$DOCKER_MODE" in
         devcontainer)
           say "  1. Open $TARGET_DIR in VSCode (with the Dev Containers extension)."
           say "  2. Accept 'Reopen in Container' when prompted."
-          say "  3. In the container's terminal, run:  cabal build all"
+          say "  3. In the container's terminal, run:  cabal update all && cabal build all"
           ;;
         codespaces)
           say "  1. Push $TARGET_DIR to a GitHub repository."
           say "  2. On GitHub: Code -> Codespaces -> Create codespace."
-          say "  3. In the codespace's terminal, run:  cabal build all"
+          say "  3. In the codespace's terminal, run:  cabal update all && cabal build all"
           ;;
         standalone)
           say "  cd $TARGET_DIR"
           say "  docker run -v \"\$PWD:/workspaces/my-project\" -w /workspaces/my-project \\"
           say "    -it ghcr.io/input-output-hk/devx-devcontainer:x86_64-linux.ghc96-iog"
           say "  # then, inside the container:"
-          say "  cabal build all"
+          say "  cabal update all && cabal build all"
           ;;
       esac
       ;;
     demeter)
       say "  1. Push $TARGET_DIR to a GitHub repository."
-      say "  2. Create an account at https://demeter.run and follow"
-      say "     https://docs.demeter.run to open a workspace from your repository."
+      say "  2. Create an account at https://demeter.run and follow https://docs.demeter.run to open a workspace from your repository."
       say "  3. In the workspace's terminal, run:"
-      say "       nix develop --accept-flake-config   ${DIM}# first run downloads the toolchain${RESET}"
-      say "       cabal update                        ${DIM}# first time only: fetches the package indexes${RESET}"
+      say "       nix develop"
+      say "       cabal update && cabal build all"
       say "       cabal build all"
       ;;
     cabal)
@@ -786,30 +565,26 @@ next_steps() {
 usage() {
   say "plinth-template installer — set up a new Plinth smart contract project."
   say ""
-  say "Usage: install.sh [flags]     (interactive when a terminal is available)"
+  say "Usage: install.sh [flags]     (asks about anything not covered by a flag)"
   say ""
   say "  --env ENV           nix | docker | demeter | cabal"
   say "  --docker-mode MODE  codespaces | devcontainer | standalone (with --env docker)"
   say "  --crypto-libs MODE  local | system | skip                  (with --env cabal)"
   say "  --prefix DIR        prefix for --crypto-libs system (default /usr/local)"
   say "  --dir NAME          project directory to create (default: my-plinth-project)"
-  say "  --repo URL          template repository (or set PLINTH_TEMPLATE_REPO)"
-  say "  --from DIR          take the template from a local directory (offline, CI)"
-  say "  --yes, -y           don't ask; use defaults for unanswered questions"
+  say "  --from DIR          take the template from a local checkout (offline, CI)"
   say "  --help, -h          this text"
 }
 
 main() {
   setup_colors
-  REPO="${PLINTH_TEMPLATE_REPO:-$REPO_DEFAULT}"
   ENV_CHOICE=""
   DOCKER_MODE=""
   CRYPTO_MODE=""
-  CRYPTO_PREFIX="/usr/local"
+  CRYPTO_PREFIX=""
   SYSTEM_CRYPTO_PREFIX=""
   TARGET_DIR=""
   FROM_DIR=""
-  ASSUME_YES=0
 
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -823,11 +598,8 @@ main() {
       --prefix=*) CRYPTO_PREFIX="${1#--prefix=}" ;;
       --dir) shift; TARGET_DIR="${1:?--dir needs an argument}" ;;
       --dir=*) TARGET_DIR="${1#--dir=}" ;;
-      --repo) shift; REPO="${1:?--repo needs an argument}" ;;
-      --repo=*) REPO="${1#--repo=}" ;;
       --from) shift; FROM_DIR="${1:?--from needs an argument}" ;;
       --from=*) FROM_DIR="${1#--from=}" ;;
-      -y|--yes) ASSUME_YES=1 ;;
       -h|--help) usage; exit 0 ;;
       *) die "unknown flag: $1 (see --help)" ;;
     esac
@@ -848,37 +620,34 @@ main() {
     *) die "invalid --crypto-libs '$CRYPTO_MODE' (valid: local, system, skip)" ;;
   esac
 
-  setup_input
   detect_platform
 
   say ""
   say "${BOLD}plinth-template${RESET} — set up a new Plinth smart contract project"
-  say "${DIM}Plinth is Cardano's Haskell-based smart contract language (GHC 9.6/9.12).${RESET}"
+  say "${DIM}Plinth is Cardano's Haskell-based smart contract language (GHC $GHC_SERIES_A/$GHC_SERIES_B).${RESET}"
+  
   if [ "$IS_WSL" = 1 ]; then
     say "${DIM}(WSL detected — following the Linux path.)${RESET}"
   fi
 
-  if [ "$INTERACTIVE" = 0 ] && [ "$ASSUME_YES" = 0 ] && [ -z "$ENV_CHOICE" ]; then
-    die "no terminal available for questions: pass --env (and other flags), or --yes for defaults"
+  if [ -z "$ENV_CHOICE" ]; then
+    ENV_CHOICE="$(select_env)"
   fi
 
-  select_env
-  if [ -z "$ENV_CHOICE" ]; then
-    ENV_CHOICE="$(detected_default_env)"
-  fi
-  select_docker_mode
   if [ "$ENV_CHOICE" = docker ] && [ -z "$DOCKER_MODE" ]; then
-    DOCKER_MODE=devcontainer
+    DOCKER_MODE="$(select_docker_mode)"
   fi
 
   explain_crypto_libs
-  select_crypto_mode
+
   if [ "$ENV_CHOICE" = cabal ] && [ -z "$CRYPTO_MODE" ]; then
-    CRYPTO_MODE=local
+    CRYPTO_MODE="$(select_crypto_mode)"
   fi
 
   say ""
   info "Checking prerequisites for the '$ENV_CHOICE' environment"
+  say ""
+
   case "$ENV_CHOICE" in
     nix)     check_nix ;;
     docker)  check_docker "$DOCKER_MODE" ;;
@@ -889,7 +658,7 @@ main() {
   if [ -z "$TARGET_DIR" ]; then
     TARGET_DIR="$(ask "Project directory" "my-plinth-project")"
   fi
-  TARGET_DIR="$(expand_tilde "$TARGET_DIR")"
+
   if [ -e "$TARGET_DIR" ]; then
     die "target directory '$TARGET_DIR' already exists; pick another name (--dir)"
   fi
@@ -897,7 +666,9 @@ main() {
   trap 'if [ -n "$SRC_CLEANUP" ]; then rm -rf "$SRC_CLEANUP"; fi' EXIT
   fetch_source
   create_project "$ENV_CHOICE" "$TARGET_DIR"
-  install_crypto_libs
+  if [ "$ENV_CHOICE" = cabal ]; then
+    install_crypto_libs
+  fi
   next_steps
 }
 

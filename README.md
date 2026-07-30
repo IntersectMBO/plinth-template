@@ -46,12 +46,12 @@ system-wide instead) and the GHC+Cabal README
 ## Repository layout — for maintainers
 
 - [template/](template) — the project files. The union of every
-  environment's files; `install.sh` selects the relevant subset when
-  creating a project (see `include_file`). One of
+  environment's files; `install.sh` copies the relevant subset when
+  creating a project (see `create_project`). One of
   [template/readmes/](template/readmes) becomes the project's `README.md`.
 - [install.sh](install.sh) — the installer served over curl. `--from DIR`
-  installs from a local checkout (offline/CI); `--yes --env ...` runs it
-  non-interactively.
+  installs from a local checkout (offline/CI); passing every question's
+  flag (`--env ...`) runs it non-interactively.
 - [get-crypto-libs.sh](get-crypto-libs.sh) — the crypto-libs bootstrap,
   copied into GHC+Cabal projects next to their `cabal.project`.
 - [.github/ci/](.github/ci) — the test suite. Every GitHub workflow is a

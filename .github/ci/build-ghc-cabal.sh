@@ -61,7 +61,7 @@ note "cabal $(cabal --numeric-version) ($(command -v cabal))"
 
 PROJECT="$WORK/project"
 if [ -z "$TREE" ]; then
-  if ! sh "$ROOT/install.sh" --yes --env cabal --from "$ROOT" \
+  if ! sh "$ROOT/install.sh" --env cabal --from "$ROOT" \
          --dir "$PROJECT" --crypto-libs local >"$WORK/install.log" 2>&1; then
     cat "$WORK/install.log" >&2
     fail "install.sh --env cabal failed"

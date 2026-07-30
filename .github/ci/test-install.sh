@@ -2,21 +2,20 @@
 #
 # End-to-end test of install.sh. The repository's template/ directory
 # carries the union of every environment's project files; the installer
-# selects the relevant ones into a fresh project directory. This test builds
-# a local git fixture of the repository (no network cloning) and checks, for
-# every environment:
+# copies the relevant ones into a fresh project directory. This test builds
+# a local fixture copy of the repository (no network) and, passing every
+# question's flag explicitly (the installer prompts on /dev/tty otherwise),
+# checks for every environment:
 #
 #   * the produced project contains EXACTLY the expected files (manifest)
-#   * only the right files were selected (crypto-libs script only in
+#   * only the right files were copied (crypto-libs script only in
 #     GHC+Cabal projects, nix files only in Nix/Demeter projects, ...)
-#   * the project has the right README and a fresh git history
+#   * the project has the right README and no git history
 #   * the final instructions tell the user to run `cabal build all`
 #
-# plus the --from (local directory) mode, the default project name, scripted
-# interactive runs (answers via PLINTH_INSTALL_TTY), the failure modes
-# (missing nix, unsupported GHC, old cabal, missing pkg-config, no terminal,
-# existing target), and the real crypto-libs download (skipped when
-# PLINTH_TEST_OFFLINE=1).
+# plus the failure modes (missing nix, unsupported GHC, old cabal, missing
+# pkg-config, existing target) and the real crypto-libs download (skipped
+# when PLINTH_TEST_OFFLINE=1).
 #
 # The toolchain checks are exercised hermetically with stub ghc/cabal
 # executables, so this test does not require a Haskell toolchain.
@@ -34,12 +33,12 @@ fail() { echo "FAIL: $*" >&2; FAILURES=$((FAILURES + 1)); }
 pass() { echo "  ok: $*"; }
 
 # --------------------------------------------------------------------------
-# Fixture 1: a local git repository with the union tree on a single branch
+# Fixture 1: a local copy of the repository's working tree
 # --------------------------------------------------------------------------
 
-echo "== building local template repository =="
+echo "== building local template fixture =="
 SRC="$WORK/fixture-repo"
-git init -q "$SRC"
+mkdir -p "$SRC"
 git ls-files --cached --others --exclude-standard | while IFS= read -r f; do
   if [ ! -f "$f" ]; then
     continue
@@ -47,15 +46,12 @@ git ls-files --cached --others --exclude-standard | while IFS= read -r f; do
   case "$f" in */*) mkdir -p "$SRC/${f%/*}" ;; esac
   cp -p "$f" "$SRC/$f"
 done
-git -C "$SRC" add -A
-git -C "$SRC" -c user.name=ci -c user.email=ci@example.invalid \
-  commit -qm "plinth-template"
-# gitignored junk (a local build inside template/) that must never reach a
-# project created with --from
+# build junk inside template/ that must never reach a project created with
+# --from (the installer copies an explicit file list, nothing else)
 mkdir -p "$SRC/template/dist-newstyle"
 echo junk > "$SRC/template/dist-newstyle/junk"
 echo junk > "$SRC/template/cabal.project.local"
-pass "fixture repo built from the working tree (with gitignored junk seeded)"
+pass "fixture built from the working tree (with build junk seeded)"
 
 # --------------------------------------------------------------------------
 # Fixture 2: stub toolchains and a minimal PATH
@@ -69,7 +65,7 @@ FARM="$WORK/farm"
 mkdir -p "$FARM"
 # sh must be in the farm: `env PATH=... sh install.sh` resolves sh via the
 # new PATH.
-for t in sh bash uname grep sed tr dirname basename mktemp git curl tar rm mkdir \
+for t in sh bash uname grep sed tr dirname basename mktemp curl tar rm mkdir \
          cat find chmod cp mv ln awk; do
   if ! p="$(command -v "$t" 2>/dev/null)"; then
     continue
@@ -125,15 +121,15 @@ run_install() {
   envs=()
   while [ "$1" != "--" ]; do envs+=("$1"); shift; done
   shift
-  env "${envs[@]}" sh "$ROOT/install.sh" --repo "file://$SRC" "$@" \
+  env "${envs[@]}" sh "$ROOT/install.sh" --from "$SRC" "$@" \
     >"$log" 2>&1 </dev/null
 }
 
-expect_fresh_git() {
-  if [ -d "$1/.git" ] && ! git -C "$1" rev-parse HEAD >/dev/null 2>&1; then
-    pass "fresh git history (no commits)"
+expect_no_git() {
+  if [ -e "$1/.git" ]; then
+    fail "$1 should not contain .git (the installer does not init a repository)"
   else
-    fail "$1 should have an initialized repo with zero commits"
+    pass "no git history created"
   fi
 }
 
@@ -161,12 +157,7 @@ expect_manifest() {
   fi
 }
 
-COMMON=".gitignore
-.hlint.yaml
-.stylish-haskell.yaml
-LICENSE.md
-NOTICE.md
-README.md
+COMMON="README.md
 app/GenAuctionValidatorBlueprint.hs
 app/GenMintingPolicyBlueprint.hs
 cabal.project
@@ -189,7 +180,7 @@ nix/utils.nix"
 echo ""
 echo "== --env cabal (stub toolchain) =="
 if run_install "$WORK/log-cabal" PATH="$GOOD:$FARM" -- \
-     --yes --env cabal --dir "$WORK/out-cabal" --crypto-libs skip; then
+     --env cabal --dir "$WORK/out-cabal" --crypto-libs skip; then
   expect_manifest "$WORK/out-cabal" <<EOF
 $COMMON
 get-crypto-libs.sh
@@ -200,7 +191,7 @@ EOF
     fail "get-crypto-libs.sh lost its executable bit"
   fi
   contains "$WORK/out-cabal/README.md" "GHC + Cabal edition"
-  expect_fresh_git "$WORK/out-cabal"
+  expect_no_git "$WORK/out-cabal"
   expect_in_log "$WORK/log-cabal" "cabal build all"
   expect_in_log "$WORK/log-cabal" "libsodium"
 else
@@ -210,13 +201,13 @@ fi
 echo ""
 echo "== --env docker =="
 if run_install "$WORK/log-docker" PATH="$GOOD:$FARM" -- \
-     --yes --env docker --docker-mode codespaces --dir "$WORK/out-docker"; then
+     --env docker --docker-mode codespaces --dir "$WORK/out-docker"; then
   expect_manifest "$WORK/out-docker" <<EOF
 $COMMON
 .devcontainer/devcontainer.json
 EOF
   contains "$WORK/out-docker/README.md" "Docker edition"
-  expect_fresh_git "$WORK/out-docker"
+  expect_no_git "$WORK/out-docker"
   expect_in_log "$WORK/log-docker" "cabal build all"
 else
   fail "--env docker exited non-zero"; sed 's/^/    /' "$WORK/log-docker" | tail -30
@@ -225,14 +216,14 @@ fi
 echo ""
 echo "== --env demeter =="
 if run_install "$WORK/log-demeter" PATH="$GOOD:$FARM" -- \
-     --yes --env demeter --dir "$WORK/out-demeter"; then
+     --env demeter --dir "$WORK/out-demeter"; then
   expect_manifest "$WORK/out-demeter" <<EOF
 $COMMON
 $NIX_FILES
 EOF
   contains "$WORK/out-demeter/nix/project.nix" "src = lib.cleanSource ../.;"
   contains "$WORK/out-demeter/README.md" "demeter.run"
-  expect_fresh_git "$WORK/out-demeter"
+  expect_no_git "$WORK/out-demeter"
   expect_in_log "$WORK/log-demeter" "cabal build all"
 else
   fail "--env demeter exited non-zero"; sed 's/^/    /' "$WORK/log-demeter" | tail -30
@@ -243,14 +234,14 @@ echo "== --env nix =="
 if command -v nix >/dev/null 2>&1; then
   NIXDIR="$(dirname "$(command -v nix)")"
   if run_install "$WORK/log-nix" PATH="$GOOD:$NIXDIR:$FARM" -- \
-       --yes --env nix --dir "$WORK/out-nix"; then
+       --env nix --dir "$WORK/out-nix"; then
     expect_manifest "$WORK/out-nix" <<EOF
 $COMMON
 $NIX_FILES
 EOF
     contains "$WORK/out-nix/nix/project.nix" "src = lib.cleanSource ../.;"
     contains "$WORK/out-nix/README.md" "Nix edition"
-    expect_fresh_git "$WORK/out-nix"
+    expect_no_git "$WORK/out-nix"
     expect_in_log "$WORK/log-nix" "cabal build all"
     expect_in_log "$WORK/log-nix" "nix develop"
   else
@@ -261,17 +252,18 @@ else
 fi
 
 # --------------------------------------------------------------------------
-# --from mode (local directory, no fetch) and the default project name
+# --from mode: relative target dir, no repository machinery, no build junk
 # --------------------------------------------------------------------------
 
 echo ""
-echo "== --from local directory + default project name =="
+echo "== --from local directory =="
 mkdir -p "$WORK/fromtest"
 if ( cd "$WORK/fromtest" && \
-     env PATH="$GOOD:$FARM" sh "$ROOT/install.sh" --yes --env docker \
-       --docker-mode codespaces --from "$SRC" >"$WORK/log-from" 2>&1 </dev/null ); then
+     env PATH="$GOOD:$FARM" sh "$ROOT/install.sh" --env docker \
+       --docker-mode codespaces --from "$SRC" --dir my-plinth-project \
+       >"$WORK/log-from" 2>&1 </dev/null ); then
   if [ -f "$WORK/fromtest/my-plinth-project/.devcontainer/devcontainer.json" ]; then
-    pass "--from created ./my-plinth-project (default name)"
+    pass "--from created ./my-plinth-project"
   else
     fail "--from did not create my-plinth-project"
   fi
@@ -282,57 +274,31 @@ if ( cd "$WORK/fromtest" && \
   else
     pass "no repository machinery (install.sh, template/, .github/) in the project"
   fi
-  # --from a working checkout must respect .gitignore (the fixture is seeded
-  # with gitignored junk) and never copy git metadata
+  # --from a checkout that was built in must not carry build junk (the
+  # fixture is seeded with some)
   if [ -e "$WORK/fromtest/my-plinth-project/dist-newstyle" ] \
      || [ -e "$WORK/fromtest/my-plinth-project/cabal.project.local" ]; then
-    fail "--from leaked gitignored files into the project"
+    fail "--from leaked build junk into the project"
   else
-    pass "--from respects .gitignore (seeded junk not copied)"
+    pass "--from copies only the explicit file list (seeded junk not copied)"
   fi
-  expect_fresh_git "$WORK/fromtest/my-plinth-project"
+  expect_no_git "$WORK/fromtest/my-plinth-project"
 else
   fail "--from run exited non-zero"; sed 's/^/    /' "$WORK/log-from" | tail -30
 fi
 
 echo ""
 echo "== --from a git WORKTREE (.git is a pointer file) =="
-# Regression: the worktree's .git FILE must never be copied — a project
-# carrying it would make `git init` reinitialize the SOURCE repository.
+# Regression: the worktree's .git FILE must never end up in a project — a
+# project carrying it would point at (and could corrupt) the SOURCE repository.
 mkdir -p "$WORK/fromwt"
 if ( cd "$WORK/fromwt" && \
-     env PATH="$GOOD:$FARM" sh "$ROOT/install.sh" --yes --env docker \
+     env PATH="$GOOD:$FARM" sh "$ROOT/install.sh" --env docker \
        --docker-mode codespaces --from "$ROOT" --dir wt-project \
        >"$WORK/log-fromwt" 2>&1 </dev/null ); then
-  if [ -f "$WORK/fromwt/wt-project/.git" ]; then
-    fail "--from copied the source worktree's .git pointer file"
-  elif [ -d "$WORK/fromwt/wt-project/.git" ]; then
-    pass ".git is a fresh repository, not a copied pointer file"
-  else
-    pass "no .git copied (git init may have been skipped)"
-  fi
+  expect_no_git "$WORK/fromwt/wt-project"
 else
   fail "--from worktree run exited non-zero"; sed 's/^/    /' "$WORK/log-fromwt" | tail -30
-fi
-
-# --------------------------------------------------------------------------
-# Scripted interactive run: answers fed through PLINTH_INSTALL_TTY
-# (menu: 4 = GHC+Cabal, crypto menu: 3 = skip, project dir name)
-# --------------------------------------------------------------------------
-
-echo ""
-echo "== interactive (scripted): choose GHC+Cabal, skip crypto libs =="
-printf '4\n3\nmy-scripted-project\n' > "$WORK/answers"
-if ( cd "$WORK" && run_install "$WORK/log-interactive" \
-       PATH="$GOOD:$FARM" PLINTH_INSTALL_TTY="$WORK/answers" -- ); then
-  if [ -f "$WORK/my-scripted-project/get-crypto-libs.sh" ]; then
-    pass "interactive run created the ghc-cabal project"
-  else
-    fail "interactive run did not create the expected project"
-  fi
-  expect_in_log "$WORK/log-interactive" "cabal build all"
-else
-  fail "interactive run exited non-zero"; sed 's/^/    /' "$WORK/log-interactive" | tail -30
 fi
 
 # --------------------------------------------------------------------------
@@ -342,7 +308,7 @@ fi
 echo ""
 echo "== failure: --env nix without nix on PATH =="
 if run_install "$WORK/log-nonix" PATH="$GOOD:$FARM" -- \
-     --yes --env nix --dir "$WORK/out-nonix"; then
+     --env nix --dir "$WORK/out-nonix"; then
   fail "--env nix succeeded although nix is not on PATH"
 else
   pass "exits non-zero"
@@ -357,7 +323,7 @@ fi
 echo ""
 echo "== failure: unsupported GHC version (9.4.8) =="
 if run_install "$WORK/log-oldghc" PATH="$OLDGHC:$FARM" -- \
-     --yes --env cabal --dir "$WORK/out-oldghc" --crypto-libs skip; then
+     --env cabal --dir "$WORK/out-oldghc" --crypto-libs skip; then
   fail "--env cabal succeeded with GHC 9.4.8"
 else
   pass "exits non-zero"
@@ -372,7 +338,7 @@ fi
 echo ""
 echo "== failure: cabal too old (3.6.2.0) =="
 if run_install "$WORK/log-oldcabal" PATH="$OLDCABAL:$FARM" -- \
-     --yes --env cabal --dir "$WORK/out-oldcabal" --crypto-libs skip; then
+     --env cabal --dir "$WORK/out-oldcabal" --crypto-libs skip; then
   fail "--env cabal succeeded with cabal 3.6.2.0"
 else
   pass "exits non-zero"
@@ -382,7 +348,7 @@ fi
 echo ""
 echo "== failure: pkg-config missing =="
 if run_install "$WORK/log-nopc" PATH="$NOPKGCONF:$FARM" -- \
-     --yes --env cabal --dir "$WORK/out-nopc" --crypto-libs skip; then
+     --env cabal --dir "$WORK/out-nopc" --crypto-libs skip; then
   fail "--env cabal succeeded without pkg-config"
 else
   pass "exits non-zero"
@@ -390,20 +356,10 @@ else
 fi
 
 echo ""
-echo "== failure: no terminal, no --env, no --yes =="
-if run_install "$WORK/log-notty" PATH="$GOOD:$FARM" PLINTH_INSTALL_NO_TTY=1 -- \
-     --dir "$WORK/out-notty"; then
-  fail "succeeded with no terminal and no flags"
-else
-  pass "exits non-zero"
-  expect_in_log "$WORK/log-notty" "no terminal available"
-fi
-
-echo ""
 echo "== failure: target directory already exists =="
 mkdir -p "$WORK/out-exists"
 if run_install "$WORK/log-exists" PATH="$GOOD:$FARM" -- \
-     --yes --env cabal --dir "$WORK/out-exists" --crypto-libs skip; then
+     --env cabal --dir "$WORK/out-exists" --crypto-libs skip; then
   fail "succeeded although the target directory exists"
 else
   pass "exits non-zero"
@@ -429,7 +385,7 @@ else
   # work dir so the test leaves no trace outside it.
   if run_install "$WORK/log-crypto" PATH="$TCONLY:$PATH" \
        PLINTH_CRYPTO_LIBS_HOME="$WORK/crypto-cache" -- \
-       --yes --env cabal --dir "$WORK/out-crypto" --crypto-libs local; then
+       --env cabal --dir "$WORK/out-crypto" --crypto-libs local; then
     found=""
     for pc in "$WORK/out-crypto"/dist-newstyle/crypto-libs/*/lib/pkgconfig/libsodium.pc; do
       if [ -f "$pc" ]; then
