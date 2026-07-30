@@ -53,7 +53,11 @@ needed, all of which ship with macOS and Linux.
 
 To install IOG's prebuilt libraries system-wide instead, run
 `./get-crypto-libs.sh --prefix /usr/local` (or any other prefix; see
-`--help`) and put `<prefix>/lib/pkgconfig` on `PKG_CONFIG_PATH`. If you
+`--help`) and put `<prefix>/lib/pkgconfig` on `PKG_CONFIG_PATH`. On Linux,
+unless `<prefix>/lib` is already on the loader's search path (as
+`/usr/local/lib` usually is, but `~/.local/lib` is not), also export
+`LD_LIBRARY_PATH="<prefix>/lib"` — without it the executables you build fail
+to start with *"libblst.so: cannot open shared object file"*. If you
 already have the three libraries installed some other way, skip the script
 entirely and make sure pkg-config can find them.
 

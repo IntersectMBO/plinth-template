@@ -20,6 +20,7 @@ compiles GHC from source and takes hours.
 
 ```
 nix develop
+cabal update      # first time only: fetches the hackage and CHaP package indexes
 cabal build all
 ```
 

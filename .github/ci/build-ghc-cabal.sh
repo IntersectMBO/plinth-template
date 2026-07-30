@@ -100,10 +100,13 @@ if [ -n "${CABAL_STORE_DIR:-}" ]; then
   note "using cabal store: $CABAL_STORE_DIR"
 fi
 
-if [ -n "${CI:-}" ]; then
-  note "CI: running cabal update"
-  "${cabal[@]}" update
-fi
+# Unconditional: the generated project's cabal.project declares the
+# cardano-haskell-packages repository, whose index no machine has unless it
+# already built a CHaP project, and cabal never fetches it on its own. Gating
+# this on $CI made local runs (run-all-local.sh) die in `cabal build all` with
+# "The package list for 'cardano-haskell-packages' does not exist."
+note "running cabal update"
+"${cabal[@]}" update
 
 note "building (cabal build all)..."
 "${cabal[@]}" build all

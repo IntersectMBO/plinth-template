@@ -26,8 +26,8 @@
 #
 # Required tools: curl, tar (the system one), and shasum or sha256sum.
 # All of these ship by default on macOS and on typical Linux distributions.
-# On Windows, use the msys2.* release assets with pacman inside GHC's MSYS2
-# environment (see README).
+# Native Windows is not supported (plutus-tx-plugin declares buildable: False
+# there); run this from a WSL2 shell and use the Linux instructions.
 
 set -euo pipefail
 
@@ -164,7 +164,8 @@ if [ -z "$PLATFORM" ]; then
     Darwin-x86_64) PLATFORM="x86_64-macos" ;;
     Linux-*)       PLATFORM="debian" ;;
     MINGW*|MSYS*|CYGWIN*)
-      die "on Windows, install the msys2.* assets from ${BASE_URL} with pacman inside GHC's MSYS2 environment (see README)" ;;
+      die "native Windows is not supported: plutus-tx-plugin declares 'buildable: False' there, so the template cannot build even with these libraries installed.
+Install WSL2 (https://learn.microsoft.com/windows/wsl/install) and run this from your WSL shell." ;;
     *) die "cannot detect platform from '$(uname -s)-$(uname -m)'; pass --platform" ;;
   esac
 fi
@@ -225,13 +226,14 @@ else
   # release tag, shared by all Plinth projects, and nothing else on the
   # system is touched.
   CACHE_HOME="${PLINTH_CRYPTO_LIBS_HOME:-${XDG_CACHE_HOME:-$HOME/.cache}/plinth-crypto-libs}"
-  PREFIX="$CACHE_HOME/$RELEASE_TAG/$PLATFORM"
+  CACHE_PREFIX="$CACHE_HOME/$RELEASE_TAG/$PLATFORM"
+  PREFIX="$CACHE_PREFIX"
   DOWNLOADS="$CACHE_HOME/downloads"
   LINK_DIR="$REPO_ROOT/dist-newstyle/crypto-libs"
   LINK="$LINK_DIR/$PLATFORM"
   ENV_FILE="$LINK_DIR/env.sh"
-  STAMP="$PREFIX/.installed-$RELEASE_TAG-$IOHK_NIX_COMMIT"
-  FINAL_PREFIX="$PREFIX"
+  STAMP="$CACHE_PREFIX/.installed-$RELEASE_TAG-$IOHK_NIX_COMMIT"
+  FINAL_PREFIX="$CACHE_PREFIX"
 
   if [ -f "$STAMP" ] && [ "$FORCE" != 1 ]; then
     link_into_project
@@ -241,6 +243,16 @@ else
     say "Use --force to reinstall. To use them:  source $ENV_FILE"
     exit 0
   fi
+
+  # The cache is shared by every Plinth project, so it must never be deleted
+  # before its replacement exists: build into a staging dir beside it (same
+  # filesystem, so the final swap is a rename) and only wipe the old tree once
+  # every asset has been downloaded, verified and fixed up. A failed,
+  # interrupted or offline run therefore leaves the previous install intact.
+  mkdir -p "$CACHE_HOME"
+  STAGE="$(mktemp -d "$CACHE_HOME/.stage.XXXXXX")"
+  trap 'chmod -R u+w "$STAGE" 2>/dev/null || true; rm -rf "$STAGE"' EXIT
+  PREFIX="$STAGE/root"
 fi
 
 if ! command -v curl >/dev/null 2>&1; then
@@ -262,11 +274,13 @@ download() {
   local asset="$1" expected="$2" out="$DOWNLOADS/$1" actual
   if [ ! -f "$out" ] || [ "$(sha256_of "$out")" != "$expected" ]; then
     say "Downloading $asset ..."
+    # $$ in the temp name: two concurrent runs must not write the same file.
     if ! curl --fail --silent --show-error --location --retry 3 \
-           --output "$out.tmp" "$BASE_URL/$asset"; then
+           --output "$out.tmp.$$" "$BASE_URL/$asset"; then
+      rm -f "$out.tmp.$$"
       die "failed to download $BASE_URL/$asset"
     fi
-    mv "$out.tmp" "$out"
+    mv "$out.tmp.$$" "$out"
   fi
   actual="$(sha256_of "$out")"
   if [ "$actual" != "$expected" ]; then
@@ -275,10 +289,8 @@ download() {
   say "Verified $asset (sha256 OK)"
 }
 
-if [ -d "$PREFIX" ]; then
-  chmod -R u+w "$PREFIX"
-fi
-rm -rf "$PREFIX"
+# $PREFIX is a fresh staging directory in both modes, so there is nothing to
+# clean out here.
 mkdir -p "$PREFIX" "$DOWNLOADS"
 
 # --------------------------------------------------------------------------
@@ -375,7 +387,18 @@ case "$PLATFORM" in
         if [ -L "$dylib" ]; then
           continue
         fi
-        install_name_tool -id "$FINAL_PREFIX/lib/$(basename "$dylib")" "$dylib" 2>/dev/null
+        # Do not discard stderr: on a macOS without the Xcode command line
+        # tools /usr/bin/install_name_tool is the xcrun stub, which exists (so
+        # the command -v check above passes) but fails on every call. Letting
+        # its own message through, and adding the hint here, is the difference
+        # between a diagnosable failure and a silent 'set -e' abort.
+        if ! install_name_tool -id "$FINAL_PREFIX/lib/$(basename "$dylib")" "$dylib"; then
+          if [ "$(uname -s)" = Darwin ]; then
+            die "install_name_tool failed on $dylib
+If it reported missing developer tools, install the Xcode command line tools: xcode-select --install"
+          fi
+          die "install_name_tool failed on $dylib"
+        fi
       done
     elif [ "$(uname -s)" = Darwin ]; then
       die "install_name_tool not found (install the Xcode command line tools: xcode-select --install)"
@@ -420,6 +443,16 @@ if [ -n "$SYSTEM_PREFIX" ]; then
   if [ -d "$PREFIX/include" ]; then
     cp -R "$PREFIX/include/." "$SYSTEM_PREFIX/include/"
   fi
+else
+  # Local mode: everything is downloaded, verified and fixed up, so the old
+  # shared cache can now be replaced with the staged tree.
+  mkdir -p "$(dirname "$CACHE_PREFIX")"
+  if [ -d "$CACHE_PREFIX" ]; then
+    chmod -R u+w "$CACHE_PREFIX"
+    rm -rf "$CACHE_PREFIX"
+  fi
+  mv "$PREFIX" "$CACHE_PREFIX"
+  PREFIX="$CACHE_PREFIX"
 fi
 
 # --------------------------------------------------------------------------

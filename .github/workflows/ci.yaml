@@ -24,9 +24,14 @@ on:
 permissions:
   contents: read
 
+# Superseded pushes to a pull request are worth cancelling; runs on main are
+# not. github.event_name is part of the group because push, schedule and
+# workflow_dispatch on main all resolve github.ref to refs/heads/main, so a
+# single group would let a merge cancel the weekly drift check (which reports
+# nothing when cancelled) and the cron cancel a merge commit's CI.
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   lint:

@@ -162,7 +162,18 @@ choose() {
     ans="$(ask "Enter a number (1-$2)" "$1")"
     case "$ans" in
       *[!0-9]*|'') ;;
-      *) if [ "$ans" -ge 1 ] && [ "$ans" -le "$2" ]; then printf '%s' "$ans"; return 0; fi ;;
+      *)
+        # Strip leading zeros so '04' dispatches like '4': the callers match
+        # this result with a string case that has no default branch, and
+        # $((ans)) is no help here because it would read '08' as octal.
+        while :; do
+          case "$ans" in
+            0?*) ans="${ans#0}" ;;
+            *) break ;;
+          esac
+        done
+        if [ "$ans" -ge 1 ] && [ "$ans" -le "$2" ]; then printf '%s' "$ans"; return 0; fi
+        ;;
     esac
     if [ "$INTERACTIVE" != 1 ]; then
       die "invalid default answer '$ans'"
@@ -506,7 +517,9 @@ install_crypto_libs() {
 
 # fetch_tarball DIR: download a github.com tarball of the repository's
 # default branch into DIR. Extracts into a sibling temp dir first so a
-# failure never leaves a half-created DIR behind.
+# failure never leaves a half-created DIR behind. Both live inside the
+# caller's private 0700 work directory, so the predictable name is not
+# exposed to other users on the system.
 fetch_tarball() {
   case "$REPO" in
     https://github.com/*) ;;
@@ -547,14 +560,25 @@ fetch_source() {
   fi
   say ""
   info "Fetching $REPO"
-  SRC_DIR="$(mktemp -d "${TMPDIR:-/tmp}/plinth-template-src.XXXXXX")"
-  SRC_CLEANUP="$SRC_DIR"
-  rm -rf "$SRC_DIR"
+  # Work *inside* the directory mktemp created (mode 0700, created
+  # exclusively) rather than deleting it to hand its name to git clone:
+  # removing it would publish the path, and since git clones happily into an
+  # existing empty directory, another local user on a shared /tmp could
+  # recreate it first and own the tree this installer copies from — and then
+  # runs, e.g. get-crypto-libs.sh.
+  _src_work="$(mktemp -d "${TMPDIR:-/tmp}/plinth-template-src.XXXXXX")"
+  SRC_CLEANUP="$_src_work"
+  SRC_DIR="$_src_work/repo"
   if git_works; then
     if git clone --quiet --depth 1 --single-branch "$REPO" "$SRC_DIR"; then
       return 0
     fi
     warn "git clone failed; trying a tarball download instead"
+    # A failed clone can still leave the destination behind (git's own
+    # "clone succeeded, but checkout failed" path). fetch_tarball's closing mv
+    # would then nest the extracted tree inside $SRC_DIR instead of becoming
+    # it, and create_project would report a bogus "template drift".
+    rm -rf "$SRC_DIR"
   fi
   if ! fetch_tarball "$SRC_DIR"; then
     die "could not fetch $REPO
@@ -566,6 +590,11 @@ fetch_source() {
 # Inside a git checkout (--from on a working tree) this respects .gitignore,
 # so build artifacts never leak into the new project. `.git` may be a FILE
 # (worktrees), hence -e, and the find fallback must skip it by name.
+#
+# The fallback (a ZIP download, or any source that is not a work tree) has no
+# .gitignore machinery available, so it prunes the same paths template/.gitignore
+# lists: a source tree that was built in once would otherwise ship its
+# dist-newstyle/ and cabal.project.local into every new project.
 list_source_files() {
   if [ -e "$SRC_DIR/.git" ] && git_works \
      && git -C "$SRC_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -573,7 +602,15 @@ list_source_files() {
   else
     (
       if ! cd "$SRC_DIR"; then exit 1; fi
-      find . -type f ! -name .git ! -path './.git/*' | sed 's|^\./||'
+      find . \
+        \( -name .git -o -name dist-newstyle -o -name result \) -prune -o \
+        -type f \
+        ! -name .pre-commit-config.yaml \
+        ! -name validator.uplc \
+        ! -name blueprint.json \
+        ! -name cabal.project.freeze \
+        ! -name cabal.project.local \
+        -print | sed 's|^\./||'
     )
   fi
 }
@@ -675,6 +712,7 @@ next_steps() {
     nix)
       say "  cd $TARGET_DIR"
       say "  nix develop          ${DIM}# first run downloads the toolchain from IOG's cache${RESET}"
+      say "  cabal update         ${DIM}# first time only: fetches the hackage and CHaP indexes${RESET}"
       say "  cabal build all      ${DIM}# builds the example auction validator${RESET}"
       say ""
       say "  ${DIM}GHC 9.6 is the default; 'nix develop .#ghc912' gives you GHC 9.12.${RESET}"
@@ -706,6 +744,7 @@ next_steps() {
       say "     https://docs.demeter.run to open a workspace from your repository."
       say "  3. In the workspace's terminal, run:"
       say "       nix develop --accept-flake-config   ${DIM}# first run downloads the toolchain${RESET}"
+      say "       cabal update                        ${DIM}# first time only: fetches the package indexes${RESET}"
       say "       cabal build all"
       ;;
     cabal)
@@ -717,7 +756,10 @@ next_steps() {
           ;;
         system)
           say "  export PKG_CONFIG_PATH=\"$SYSTEM_CRYPTO_PREFIX/lib/pkgconfig\${PKG_CONFIG_PATH:+:\$PKG_CONFIG_PATH}\""
-          say "                       ${DIM}# add this to your shell profile${RESET}"
+          say "  export LD_LIBRARY_PATH=\"$SYSTEM_CRYPTO_PREFIX/lib\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}\""
+          say "                       ${DIM}# add both to your shell profile; on Linux the second one is"
+          say "                       # what lets the executables you build find the libraries at"
+          say "                       # run time, unless $SYSTEM_CRYPTO_PREFIX/lib is already on the loader path${RESET}"
           ;;
         skip)
           say "  ./get-crypto-libs.sh"

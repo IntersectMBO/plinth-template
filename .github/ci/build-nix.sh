@@ -89,10 +89,11 @@ if ! nix develop "path:$PROJECT#$SHELL_NAME" --accept-flake-config --command bas
        fi
        note "crypto libs provided by the shell: sodium $(pkg-config --modversion libsodium), secp256k1 $(pkg-config --modversion libsecp256k1), blst $(pkg-config --modversion libblst)"
 
-       if [ -n "${CI:-}" ]; then
-         note "CI: running cabal update"
-         cabal update
-       fi
+       # Unconditional: the shell ships a stock cabal with no package index, and
+       # cabal.project pins index-states for hackage and CHaP that must be
+       # fetched first. Gating this on $CI made local runs fail in cabal build.
+       note "running cabal update"
+       cabal update
 
        note "building (cabal build all)..."
        cabal build all

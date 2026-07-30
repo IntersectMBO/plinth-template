@@ -95,6 +95,12 @@ if ! docker run --rm \
            exit 1
          fi
          echo "build-docker(container): blueprint OK"
+         # Loading plutus-tx-plugin into a live GHC session is a separate
+         # failure mode from batch compilation, and it is the path HLS uses.
+         # The deleted build-devcontainer.yml workflow checked it on every PR;
+         # keep that coverage here, in the same image.
+         echo ":q" | cabal repl lib:plinth-validators
+         echo "build-docker(container): cabal repl loads the plugin OK"
        '; then
   fail "container build failed"
 fi
