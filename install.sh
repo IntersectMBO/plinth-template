@@ -26,12 +26,21 @@
 #                       official plinth-template)
 #   --from DIR          take the template from a local checkout instead of
 #                       downloading it (offline installs, CI)
+#   --ref REV           branch, tag or commit to download (default: HEAD, the
+#                       repository's default branch)
 #   --help, -h          this text
 #
 # POSIX sh; no bashisms. The entire logic lives in functions and the last
 # line is `main "$@"`, so a partially downloaded script executes nothing.
 
 set -eu
+
+# The repository the template is downloaded from, and the revision to take.
+# HEAD means the default branch; --ref overrides it (any branch, tag or commit
+# sha). The project layout this installer copies from — a template/ directory —
+# must exist in that revision.
+TEMPLATE_REPO="IntersectMBO/plinth-template"
+TEMPLATE_REF="HEAD"
 
 GHC_SERIES_A="9.6"
 GHC_SERIES_B="9.12"
@@ -413,7 +422,7 @@ install_crypto_libs() {
 # fetch_tarball DIR: download and extract the repository tarball into DIR.
 fetch_tarball() {
   curl -fsSL --proto '=https' --tlsv1.2 \
-    "https://codeload.github.com/IntersectMBO/plinth-template/tar.gz/HEAD" \
+    "https://codeload.github.com/$TEMPLATE_REPO/tar.gz/$TEMPLATE_REF" \
     | tar -xzf - --strip-components=1 -C "$1"
 }
 
@@ -423,18 +432,31 @@ SRC_CLEANUP=""
 fetch_source() {
   if [ -n "$FROM_DIR" ]; then
     SRC_DIR="$FROM_DIR"
+    if [ ! -f "$SRC_DIR/template/plinth-template.cabal" ]; then
+      die "--from: '$FROM_DIR' does not look like a plinth-template checkout
+  (no template/plinth-template.cabal in it)."
+    fi
     return 0
   fi
   if ! have curl; then
     die "curl is required to download the template"
   fi
   say ""
-  info "Fetching github.com/IntersectMBO/plinth-template"
+  info "Fetching $TEMPLATE_REPO ($TEMPLATE_REF)"
   SRC_CLEANUP="$(mktemp -d)"
   SRC_DIR="$SRC_CLEANUP/repo"
   mkdir -p "$SRC_DIR"
+  # `curl | tar` cannot report curl's failure: POSIX sh has no pipefail, so a
+  # pipeline's status is tar's, and an empty archive extracts "successfully".
+  # Checking for a file every template must have covers both a failed download
+  # and a ref whose layout this installer cannot use.
   if ! fetch_tarball "$SRC_DIR"; then
-    die "could not download github.com/IntersectMBO/plinth-template"
+    die "could not download $TEMPLATE_REPO ($TEMPLATE_REF)"
+  fi
+  if [ ! -f "$SRC_DIR/template/plinth-template.cabal" ]; then
+    die "$TEMPLATE_REPO ($TEMPLATE_REF) has no template/ directory, so this
+  installer cannot use it. Pass --ref with a revision that has one, or --from
+  with a local checkout."
   fi
 }
 
@@ -573,6 +595,7 @@ usage() {
   say "  --prefix DIR        prefix for --crypto-libs system (default /usr/local)"
   say "  --dir NAME          project directory to create (default: my-plinth-project)"
   say "  --from DIR          take the template from a local checkout (offline, CI)"
+  say "  --ref REV           branch, tag or commit to download (default: HEAD)"
   say "  --help, -h          this text"
 }
 
@@ -600,6 +623,8 @@ main() {
       --dir=*) TARGET_DIR="${1#--dir=}" ;;
       --from) shift; FROM_DIR="${1:?--from needs an argument}" ;;
       --from=*) FROM_DIR="${1#--from=}" ;;
+      --ref) shift; TEMPLATE_REF="${1:?--ref needs an argument}" ;;
+      --ref=*) TEMPLATE_REF="${1#--ref=}" ;;
       -h|--help) usage; exit 0 ;;
       *) die "unknown flag: $1 (see --help)" ;;
     esac
