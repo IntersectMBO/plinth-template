@@ -12,11 +12,11 @@
 #   --crypto-libs local   (default) libraries go into the per-user cache and
 #                         are linked into the project; the generated
 #                         dist-newstyle/crypto-libs/env.sh sets the paths.
-#   --crypto-libs system  libraries go into a --prefix (here a throwaway one
-#                         under the scratch dir, so no sudo and nothing
-#                         system-wide is touched); PKG_CONFIG_PATH and
+#   --crypto-libs system  libraries go into a --prefix under $HOME (no sudo,
+#                         nothing system-wide touched); PKG_CONFIG_PATH and
 #                         LD_LIBRARY_PATH are set from that prefix, which is
-#                         what the installer tells such users to do.
+#                         what the installer tells such users to do. Override
+#                         it with PLINTH_SYSTEM_PREFIX.
 #
 # Usage: build-ghc-cabal.sh [--crypto-libs local|system] [PRE_CREATED_TREE]
 #
@@ -85,9 +85,15 @@ note "cabal $(cabal --numeric-version) ($(command -v cabal))"
 # Fresh copy of the branch tree
 # --------------------------------------------------------------------------
 
-# A throwaway prefix inside the scratch dir: writable without sudo, and
-# removed with everything else on exit.
-SYSTEM_PREFIX="$WORK/crypto-prefix"
+# The system-mode prefix. It must be STABLE across runs — not a path under
+# $WORK — for the reason get-crypto-libs.sh documents for its own cache: cabal
+# bakes the crypto libraries' absolute paths into the packages it compiles
+# into the store, and CI caches that store between runs. With a fresh mktemp
+# prefix each run, a restored store points at a directory that no longer
+# exists and the build dies with `ld: cannot find -lsodium`. Every run
+# re-installs into this path, so a fresh runner (cached store, prefix not
+# there yet) works too. Still no sudo and still nothing system-wide.
+SYSTEM_PREFIX="${PLINTH_SYSTEM_PREFIX:-$HOME/.cache/plinth-ci-crypto-prefix}"
 
 note "crypto-libs mode: $CRYPTO_MODE"
 

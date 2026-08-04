@@ -90,9 +90,14 @@ jobs:
             ${{ steps.setup.outputs.cabal-store }}
             ~/.cabal/packages
             ~/.cache/cabal/packages
-          key: crypto-cabal-${{ runner.os }}-${{ matrix.ghc }}-${{ matrix.crypto }}-${{ hashFiles('template/cabal.project') }}
+          # The v2 salt invalidates stores built when the system-mode crypto
+          # prefix was a per-run temp dir: cabal baked that path into the
+          # packages it compiled, so restoring such a store fails to link
+          # (`ld: cannot find -lsodium`). Bump it whenever the crypto
+          # libraries' install location changes.
+          key: crypto-cabal-v2-${{ runner.os }}-${{ matrix.ghc }}-${{ matrix.crypto }}-${{ hashFiles('template/cabal.project') }}
           restore-keys: |
-            crypto-cabal-${{ runner.os }}-${{ matrix.ghc }}-${{ matrix.crypto }}-
+            crypto-cabal-v2-${{ runner.os }}-${{ matrix.ghc }}-${{ matrix.crypto }}-
 
       - run: .github/ci/build-ghc-cabal.sh --crypto-libs ${{ matrix.crypto }}
 
