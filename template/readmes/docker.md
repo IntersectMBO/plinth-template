@@ -29,10 +29,21 @@ system besides Docker itself.
     -it ghcr.io/input-output-hk/devx-devcontainer:x86_64-linux.ghc96-iog
   ```
 
+  Before running the command, you may want to replace `my-project` (in both
+  places) with your actual project name; it is only the name of the folder
+  the project is mounted under inside the container.
+
 > NOTE:
 > You can modify your [`devcontainer.json`](./.devcontainer/devcontainer.json)
 > file to customize the container (more info
 > [here](https://github.com/input-output-hk/devx?tab=readme-ov-file#vscode-devcontainer--github-codespace-support)).
+
+> NOTE (for Linux users):
+> If `docker run` fails with "permission denied while trying to connect to the
+> Docker daemon socket", your user is not in the `docker` group. Rather than
+> falling back to `sudo docker`, follow Docker's
+> [post-installation steps](https://docs.docker.com/engine/install/linux-postinstall/):
+> `sudo usermod -aG docker $USER`, then log out and back in.
 
 > NOTE (for Windows users):
 > It is recommended to install and run Docker on your native OS. If you want

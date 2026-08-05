@@ -524,19 +524,20 @@ next_steps() {
         devcontainer)
           say "  1. Open $TARGET_DIR in VSCode (with the Dev Containers extension)."
           say "  2. Accept 'Reopen in Container' when prompted."
-          say "  3. In the container's terminal, run:  cabal update all && cabal build all"
+          say "  3. In the container's terminal, run:  cabal update && cabal build all"
           ;;
         codespaces)
           say "  1. Push $TARGET_DIR to a GitHub repository."
           say "  2. On GitHub: Code -> Codespaces -> Create codespace."
-          say "  3. In the codespace's terminal, run:  cabal update all && cabal build all"
+          say "  3. In the codespace's terminal, run:  cabal update && cabal build all"
           ;;
         standalone)
+          project_name="$(basename "$TARGET_DIR")"
           say "  cd $TARGET_DIR"
-          say "  docker run -v \"\$PWD:/workspaces/my-project\" -w /workspaces/my-project \\"
+          say "  docker run -v \"\$PWD:/workspaces/$project_name\" -w /workspaces/$project_name \\"
           say "    -it ghcr.io/input-output-hk/devx-devcontainer:x86_64-linux.ghc96-iog"
           say "  # then, inside the container:"
-          say "  cabal update all && cabal build all"
+          say "  cabal update && cabal build all"
           ;;
       esac
       ;;
@@ -545,7 +546,7 @@ next_steps() {
       say "  2. Create an account at https://demeter.run and follow https://docs.demeter.run to open a workspace from your repository."
       say "  3. In the workspace's terminal, run:"
       say "       nix develop"
-      say "       cabal update && cabal build all"
+      say "       cabal update"
       say "       cabal build all"
       ;;
     cabal)
