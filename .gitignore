@@ -2,3 +2,5 @@ dist-newstyle
 cabal.project.local
 blueprint.json
 result
+__megatest__/
+.github/ci/megatest.sh

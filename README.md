@@ -73,6 +73,9 @@ system-wide instead) and the GHC+Cabal README
   | `build-docker.sh`          | full build inside the devx devcontainer image      | `ci.yaml`                |
   | `bump-plutus-version.sh`   | bumps plutus + index-states in template/           | `bump-plutus-version.yml`|
   | `test-blueprint-parity.sh` | blueprint byte-parity between ghcup and nix        | (manual)                 |
+  | `megatest.sh`              | the full build matrix (nix + ghcup × GHC 9.6/9.12  | (manual)                 |
+  |                            | × local/system crypto libs) run locally, with      |                          |
+  |                            | every artifact sandboxed in `__megatest__/`        |                          |
 
   [ci.yaml](.github/workflows/ci.yaml) runs all of its jobs in parallel on
   every pull request — no path filters, everything is rebuilt and retested.

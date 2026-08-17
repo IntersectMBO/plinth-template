@@ -20,6 +20,7 @@ SCRIPTS=(
   .github/ci/bump-plutus-version.sh
   .github/ci/run-all-local.sh
   .github/ci/test-blueprint-parity.sh
+  .github/ci/megatest.sh
 )
 
 for f in "${SCRIPTS[@]}"; do
