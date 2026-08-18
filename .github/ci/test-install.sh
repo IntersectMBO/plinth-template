@@ -14,8 +14,9 @@
 #   * the final instructions tell the user to run `cabal build all`
 #
 # plus the failure modes (missing nix, unsupported GHC, old cabal, missing
-# pkg-config, existing target) and the real crypto-libs download (skipped
-# when PLINTH_TEST_OFFLINE=1).
+# pkg-config, existing target, no terminal to prompt on, missing curl,
+# unsupported CPU architecture, invalid --repo) and the real crypto-libs
+# download (skipped when PLINTH_TEST_OFFLINE=1).
 #
 # The toolchain checks are exercised hermetically with stub ghc/cabal
 # executables, so this test does not require a Haskell toolchain.
@@ -61,17 +62,27 @@ pass "fixture built from the working tree (with build junk seeded)"
 # the external tools install.sh legitimately needs.
 # --------------------------------------------------------------------------
 
-FARM="$WORK/farm"
-mkdir -p "$FARM"
+# make_farm DIR TOOL...: populate DIR with symlinks to the host's tools.
+make_farm() {
+  farm_dir="$1"; shift
+  mkdir -p "$farm_dir"
+  for t in "$@"; do
+    if ! p="$(command -v "$t" 2>/dev/null)"; then
+      continue
+    fi
+    ln -s "$p" "$farm_dir/$t"
+  done
+}
+
 # sh must be in the farm: `env PATH=... sh install.sh` resolves sh via the
-# new PATH.
-for t in sh bash uname grep sed tr dirname basename mktemp curl tar rm mkdir \
-         cat find chmod cp mv ln awk; do
-  if ! p="$(command -v "$t" 2>/dev/null)"; then
-    continue
-  fi
-  ln -s "$p" "$FARM/$t"
-done
+# new PATH. NOCURL_FARM differs from FARM only by curl's absence, for the
+# tests proving which crypto modes actually require it.
+FARM_TOOLS=(sh bash uname grep sed tr dirname basename mktemp tar rm mkdir
+            cat find chmod cp mv ln awk)
+FARM="$WORK/farm"
+make_farm "$FARM" "${FARM_TOOLS[@]}" curl
+NOCURL_FARM="$WORK/farm-nocurl"
+make_farm "$NOCURL_FARM" "${FARM_TOOLS[@]}"
 
 make_stub() { # make_stub DIR NAME VERSION
   mkdir -p "$1"
@@ -157,7 +168,10 @@ expect_manifest() {
   fi
 }
 
-COMMON="README.md
+COMMON=".gitignore
+LICENSE.md
+NOTICE.md
+README.md
 app/GenAuctionValidatorBlueprint.hs
 app/GenMintingPolicyBlueprint.hs
 cabal.project
@@ -165,7 +179,9 @@ plinth-template.cabal
 src/AuctionMintingPolicy.hs
 src/AuctionValidator.hs"
 
-NIX_FILES="flake.lock
+NIX_FILES=".hlint.yaml
+.stylish-haskell.yaml
+flake.lock
 flake.nix
 nix/outputs.nix
 nix/pkgs.nix
@@ -191,6 +207,9 @@ EOF
     fail "get-crypto-libs.sh lost its executable bit"
   fi
   contains "$WORK/out-cabal/README.md" "GHC + Cabal edition"
+  # validator.uplc distinguishes template/.gitignore from the repo root's
+  contains "$WORK/out-cabal/.gitignore" "validator.uplc"
+  contains "$WORK/out-cabal/LICENSE.md" "Apache License"
   expect_no_git "$WORK/out-cabal"
   expect_in_log "$WORK/log-cabal" "cabal build all"
   expect_in_log "$WORK/log-cabal" "libsodium"
@@ -364,6 +383,216 @@ if run_install "$WORK/log-exists" PATH="$GOOD:$FARM" -- \
 else
   pass "exits non-zero"
   expect_in_log "$WORK/log-exists" "already exists"
+fi
+
+# --------------------------------------------------------------------------
+# No terminal: every unanswered question must die pointing at the flags
+# (not with the shell's raw "cannot open /dev/tty"), and nothing may be
+# created. Locally a controlling terminal may be present, so the runs are
+# detached with setsid where available (macOS ships none by default: skip).
+# --------------------------------------------------------------------------
+
+echo ""
+echo "== no terminal: prompts fail with a pointer to the flags =="
+HAVE_SETSID=0
+if command -v setsid >/dev/null 2>&1; then
+  HAVE_SETSID=1
+fi
+# no_tty_install LOG [install.sh flags...]
+no_tty_install() {
+  log="$1"; shift
+  if [ "$HAVE_SETSID" = 1 ]; then
+    # setsid first: it is not in the farm, so it must resolve before the
+    # PATH override takes effect. -w propagates the exit status.
+    setsid -w env PATH="$GOOD:$FARM" sh "$ROOT/install.sh" --from "$SRC" "$@" \
+      >"$log" 2>&1 </dev/null
+  else
+    env PATH="$GOOD:$FARM" sh "$ROOT/install.sh" --from "$SRC" "$@" \
+      >"$log" 2>&1 </dev/null
+  fi
+}
+if [ "$HAVE_SETSID" = 0 ] && ( : < /dev/tty ) 2>/dev/null; then
+  echo "  skip: controlling terminal present and no setsid to shed it (brew install util-linux)"
+else
+  # (1) missing --env: the very first question
+  if no_tty_install "$WORK/log-notty1" --dir "$WORK/out-notty1"; then
+    fail "succeeded without a terminal and without --env"
+  else
+    pass "missing --env exits non-zero"
+    expect_in_log "$WORK/log-notty1" "Every question has a flag"
+    if [ ! -e "$WORK/out-notty1" ]; then
+      pass "nothing created"
+    else
+      fail "created despite the unanswered question"
+    fi
+  fi
+  # (2) the system-prefix question — regression test: it used to fire AFTER
+  # create_project, stranding a half-configured project on failure
+  if no_tty_install "$WORK/log-notty2" --env cabal --crypto-libs system \
+       --dir "$WORK/out-notty2"; then
+    fail "succeeded without a terminal and without --prefix"
+  else
+    pass "missing --prefix exits non-zero"
+    expect_in_log "$WORK/log-notty2" "Every question has a flag"
+    if [ ! -e "$WORK/out-notty2" ]; then
+      pass "nothing created before the prefix question"
+    else
+      fail "created before the prefix question was answered"
+    fi
+  fi
+fi
+
+# --------------------------------------------------------------------------
+# --repo: parsed and validated (the fetch itself is covered by --from)
+# --------------------------------------------------------------------------
+
+echo ""
+echo "== --repo: URL form accepted, garbage rejected =="
+if run_install "$WORK/log-repo-ok" PATH="$GOOD:$FARM" -- \
+     --repo https://github.com/IntersectMBO/plinth-template.git \
+     --env docker --docker-mode codespaces --dir "$WORK/out-repo-ok"; then
+  pass "--repo URL form accepted (alongside --from)"
+else
+  fail "--repo URL form broke a --from install"
+  sed 's/^/    /' "$WORK/log-repo-ok" | tail -5
+fi
+if run_install "$WORK/log-repo-bad" PATH="$GOOD:$FARM" -- \
+     --repo https://github.com/bogus \
+     --env docker --docker-mode codespaces --dir "$WORK/out-repo-bad"; then
+  fail "--repo without an OWNER/REPO shape was accepted"
+else
+  pass "exits non-zero"
+  # 'bogus' without the URL prefix proves the stripping ran before validation
+  expect_in_log "$WORK/log-repo-bad" "invalid --repo 'bogus'"
+  if [ ! -e "$WORK/out-repo-bad" ]; then
+    pass "nothing created"
+  else
+    fail "created despite the invalid --repo"
+  fi
+fi
+
+# --------------------------------------------------------------------------
+# curl is only required when something will actually be downloaded
+# --------------------------------------------------------------------------
+
+echo ""
+echo "== --crypto-libs skip works without curl =="
+if run_install "$WORK/log-nocurl-skip" PATH="$GOOD:$NOCURL_FARM" -- \
+     --env cabal --dir "$WORK/out-nocurl-skip" --crypto-libs skip; then
+  pass "succeeds without curl in skip mode"
+  expect_in_log "$WORK/log-nocurl-skip" "cabal build all"
+else
+  fail "--crypto-libs skip demanded curl"
+  sed 's/^/    /' "$WORK/log-nocurl-skip" | tail -10
+fi
+
+echo ""
+echo "== --crypto-libs local still requires curl =="
+if run_install "$WORK/log-nocurl-local" PATH="$GOOD:$NOCURL_FARM" -- \
+     --env cabal --dir "$WORK/out-nocurl-local" --crypto-libs local; then
+  fail "--crypto-libs local succeeded without curl"
+else
+  pass "exits non-zero"
+  expect_in_log "$WORK/log-nocurl-local" "curl is required (to download the crypto C libraries)"
+  if [ ! -e "$WORK/out-nocurl-local" ]; then
+    pass "nothing created"
+  else
+    fail "created despite missing curl"
+  fi
+fi
+
+# --------------------------------------------------------------------------
+# aarch64 Linux: no prebuilt crypto libraries exist for it — the scripts
+# must say so up front instead of installing x86_64 binaries that fail at
+# link time an hour later (uname is stubbed; nothing touches the network)
+# --------------------------------------------------------------------------
+
+ARMSTUB="$WORK/stubs-uname-arm"
+mkdir -p "$ARMSTUB"
+cat > "$ARMSTUB/uname" <<'EOF'
+#!/bin/sh
+case "${1:-}" in
+  -m) echo aarch64 ;;
+  *)  echo Linux ;;
+esac
+EOF
+chmod +x "$ARMSTUB/uname"
+
+echo ""
+echo "== get-crypto-libs.sh on (faked) aarch64 Linux dies before downloading =="
+mkdir -p "$WORK/arm-scratch"
+if ( cd "$WORK/arm-scratch" && \
+     env PATH="$ARMSTUB:$FARM" PLINTH_CRYPTO_LIBS_PLATFORM= \
+       bash "$SRC/get-crypto-libs.sh" >"$WORK/log-gcl-arm" 2>&1 </dev/null ); then
+  fail "get-crypto-libs.sh succeeded on aarch64 Linux"
+else
+  pass "exits non-zero"
+  expect_in_log "$WORK/log-gcl-arm" "no prebuilt libraries exist for aarch64 Linux"
+fi
+
+echo ""
+echo "== install.sh --env cabal on (faked) aarch64 Linux =="
+if run_install "$WORK/log-arm-local" PATH="$ARMSTUB:$GOOD:$FARM" \
+     PLINTH_CRYPTO_LIBS_PLATFORM= -- \
+     --env cabal --crypto-libs local --dir "$WORK/out-arm-local"; then
+  fail "--crypto-libs local succeeded on aarch64 Linux"
+else
+  pass "exits non-zero"
+  expect_in_log "$WORK/log-arm-local" "no prebuilt crypto C libraries exist for aarch64 Linux"
+  if [ ! -e "$WORK/out-arm-local" ]; then
+    pass "nothing created"
+  else
+    fail "created despite the unsupported architecture"
+  fi
+fi
+if run_install "$WORK/log-arm-skip" PATH="$ARMSTUB:$GOOD:$FARM" \
+     PLINTH_CRYPTO_LIBS_PLATFORM= -- \
+     --env cabal --crypto-libs skip --dir "$WORK/out-arm-skip"; then
+  pass "--crypto-libs skip still works on aarch64 Linux"
+else
+  fail "--crypto-libs skip refused on aarch64 Linux"
+  sed 's/^/    /' "$WORK/log-arm-skip" | tail -10
+fi
+
+# --------------------------------------------------------------------------
+# --prefix with a literal '~': install.sh must expand it before the
+# writability probe, before invoking get-crypto-libs.sh and in the printed
+# exports — and must NOT create a literal './~' directory in the cwd.
+# get-crypto-libs.sh is stubbed: this tests install.sh's plumbing, not the
+# download.
+# --------------------------------------------------------------------------
+
+echo ""
+echo "== --crypto-libs system: '~' in --prefix expands before anything runs =="
+STUBSRC="$WORK/fixture-stub"
+cp -R "$SRC" "$STUBSRC"
+cat > "$STUBSRC/get-crypto-libs.sh" <<'EOF'
+#!/bin/sh
+echo "stub-get-crypto-libs: $*"
+EOF
+chmod +x "$STUBSRC/get-crypto-libs.sh"
+mkdir -p "$WORK/tildetest" "$WORK/fakehome"
+# shellcheck disable=SC2088 # passing a LITERAL, unexpanded ~ is the point
+if ( cd "$WORK/tildetest" && \
+     env PATH="$GOOD:$FARM" HOME="$WORK/fakehome" sh "$ROOT/install.sh" \
+       --env cabal --crypto-libs system --prefix '~/cryptoprefix' \
+       --from "$STUBSRC" --dir out-tilde \
+       >"$WORK/log-tilde" 2>&1 </dev/null ); then
+  if [ -d "$WORK/fakehome/cryptoprefix/lib" ]; then
+    pass "prefix expanded to \$HOME before the writability probe"
+  else
+    fail "expanded prefix not created under the fake HOME"
+  fi
+  if [ -e "$WORK/tildetest/~" ]; then
+    fail "a literal '~' directory was created in the cwd"
+  else
+    pass "no literal '~' directory in the cwd"
+  fi
+  expect_in_log "$WORK/log-tilde" "stub-get-crypto-libs: --prefix $WORK/fakehome/cryptoprefix"
+  expect_in_log "$WORK/log-tilde" "$WORK/fakehome/cryptoprefix/lib/pkgconfig"
+else
+  fail "tilde-prefix run exited non-zero"
+  sed 's/^/    /' "$WORK/log-tilde" | tail -20
 fi
 
 # --------------------------------------------------------------------------

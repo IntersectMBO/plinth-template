@@ -3,6 +3,10 @@
 # parallel), on pushes to main, on demand, and once a week to catch upstream
 # drift (toolchains, the devx image, the binary caches).
 #
+# The one exception is blueprint-parity.yaml: the ghcup-vs-nix blueprint
+# parity check means four full builds — too heavy per PR — so it runs weekly
+# and on demand from its own workflow.
+#
 # Every job is a thin wrapper around a script in .github/ci/, so the same
 # checks run locally: see .github/ci/run-all-local.sh.
 #

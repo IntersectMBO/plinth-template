@@ -22,8 +22,9 @@
 #   --crypto-libs MODE  local | system | skip                   (with --env cabal)
 #   --prefix DIR        prefix for --crypto-libs system (default /usr/local)
 #   --dir NAME          project directory to create (default: my-plinth-project)
-#   --repo URL          template repository on github.com (default: the
-#                       official plinth-template)
+#   --repo OWNER/REPO   template repository on github.com (default: the
+#                       official plinth-template); a full https://github.com/
+#                       URL also works
 #   --from DIR          take the template from a local checkout instead of
 #                       downloading it (offline installs, CI)
 #   --ref REV           branch, tag or commit to download (default: HEAD, the
@@ -100,8 +101,17 @@ report_tool() { ok "$1 $2 ($(tool_path "$1"))"; }
 
 # ask PROMPT DEFAULT -> stdout: the answer (DEFAULT on empty input).
 ask() {
+  # `:` is a special builtin: a redirection error on it aborts a
+  # non-interactive shell, so the probe runs in a subshell. [ -r /dev/tty ]
+  # is not enough: the node can exist yet fail to open without a
+  # controlling terminal.
+  if ! ( : < /dev/tty ) 2>/dev/null; then
+    die "cannot ask '$1': no terminal is available.
+  Every question has a flag: rerun with the answers as flags (see --help)."
+  fi
   printf '%s [%s]: ' "${BOLD}$1${RESET}" "$2" >&2
-  read -r ans < /dev/tty
+  read -r ans < /dev/tty || die "cannot read the answer to '$1' (end of input).
+  Every question has a flag: rerun with the answers as flags (see --help)."
   if [ -z "$ans" ]; then
     ans="$2"
   fi
@@ -110,7 +120,7 @@ ask() {
 
 # confirm PROMPT DEFAULT(y|n) -> exit status
 confirm() {
-  ans="$(ask "$1 (y/n)" "$2")"
+  ans="$(ask "$1 (y/n)" "$2")" || return 1
   case "$ans" in
     y|Y|yes|YES) return 0 ;;
     *) return 1 ;;
@@ -121,7 +131,7 @@ confirm() {
 # The caller prints the menu beforehand.
 choose() {
   while :; do
-    n="$(ask "Enter a number (1-$2)" "$1")"
+    n="$(ask "Enter a number (1-$2)" "$1")" || return 1
     case "$n" in
       [1-9])
         if [ "$n" -le "$2" ]; then
@@ -225,6 +235,7 @@ check_demeter() {
 }
 
 check_cabal_env() {
+  # $1 = crypto mode
   if ! have ghc; then
     die "ghc not found on PATH. Plinth supports GHC $GHC_SERIES_A.x and $GHC_SERIES_B.x.
   Install one with ghcup (https://www.haskell.org/ghcup/):
@@ -261,8 +272,26 @@ check_cabal_env() {
   fi
   report_tool pkg-config "$(pkg-config --version)"
 
-  if ! have curl; then
-    die "curl is required (to download the crypto C libraries)"
+  if [ "$1" != skip ]; then
+    # get-crypto-libs.sh downloads prebuilt libraries that only exist for
+    # x86_64 Linux and macOS; fail here, before anything is created, rather
+    # than after. --platform / PLINTH_CRYPTO_LIBS_PLATFORM overrides the
+    # detection (e.g. under x86_64 emulation).
+    if [ -z "${PLINTH_CRYPTO_LIBS_PLATFORM:-}" ]; then
+      case "$(uname -s)-$(uname -m)" in
+        Linux-x86_64|Darwin-*) ;;
+        Linux-*)
+          die "no prebuilt crypto C libraries exist for $(uname -m) Linux (x86_64 only).
+  Use the Nix environment instead (nix builds them from source), or rerun with
+  --crypto-libs skip and install libsodium (VRF-patched), libsecp256k1 and
+  libblst yourself."
+          ;;
+      esac
+    fi
+    if ! have curl; then
+      die "curl is required (to download the crypto C libraries).
+  Rerun with --crypto-libs skip if you plan to install them yourself."
+    fi
   fi
 }
 
@@ -298,7 +327,11 @@ select_env() {
     demeter) default_n=3 ;;
     cabal) default_n=4 ;;
   esac
-  case "$(choose "$default_n" 4)" in
+  # Capture first: a die inside $( ) used directly as the case word would be
+  # swallowed (no pattern matches, case succeeds); a failed assignment is
+  # what makes the caller's set -e stop the script.
+  n="$(choose "$default_n" 4)" || return 1
+  case "$n" in
     1) echo nix ;;
     2) echo docker ;;
     3) echo demeter ;;
@@ -315,7 +348,8 @@ select_docker_mode() {
   say "  2) Codespaces    ${DIM}run it on GitHub's cloud, in the browser${RESET}"
   say "  3) Standalone    ${DIM}plain 'docker run' with the project mounted${RESET}"
   say ""
-  case "$(choose 1 3)" in
+  n="$(choose 1 3)" || return 1
+  case "$n" in
     1) echo devcontainer ;;
     2) echo codespaces ;;
     3) echo standalone ;;
@@ -363,7 +397,8 @@ select_crypto_mode() {
   say "  2) System-wide    ${DIM}into a prefix such as /usr/local (may need sudo)${RESET}"
   say "  3) Skip           ${DIM}install them yourself later${RESET}"
   say ""
-  case "$(choose 1 3)" in
+  n="$(choose 1 3)" || return 1
+  case "$n" in
     1) echo local ;;
     2) echo system ;;
     3) echo skip ;;
@@ -385,9 +420,6 @@ install_crypto_libs() {
       say "  ./get-crypto-libs.sh re-links instantly, nothing is re-downloaded."
       ;;
     system)
-      if [ -z "$CRYPTO_PREFIX" ]; then
-        CRYPTO_PREFIX="$(ask "Install prefix" "/usr/local")"
-      fi
       say ""
       info "Installing the crypto C libraries into $CRYPTO_PREFIX"
       if quietly mkdir -p "$CRYPTO_PREFIX/lib" "$CRYPTO_PREFIX/include" && [ -w "$CRYPTO_PREFIX/lib" ]; then
@@ -473,21 +505,21 @@ create_project() {
   src="$SRC_DIR/template"
   cp -r "$src/cabal.project"         "$dir"
   cp -r "$src/plinth-template.cabal" "$dir"
+  cp "$src/.gitignore"               "$dir"
+  cp "$src/LICENSE.md"               "$dir"
+  cp "$src/NOTICE.md"                "$dir"
   cp -r "$src/app"                   "$dir"
   cp -r "$src/src"                   "$dir"
 
   case "$env" in
-    nix)
-      cp -r "$src/nix"         "$dir"
-      cp "$src/flake.lock"     "$dir"
-      cp "$src/flake.nix"      "$dir"
-      cp "$src/readmes/nix.md" "$dir/README.md"
-      ;;
-    demeter)
-      cp -r "$src/nix"             "$dir"
-      cp "$src/flake.lock"         "$dir"
-      cp "$src/flake.nix"          "$dir"
-      cp "$src/readmes/demeter.md" "$dir/README.md"
+    nix|demeter)
+      cp -r "$src/nix"                "$dir"
+      cp "$src/flake.lock"            "$dir"
+      cp "$src/flake.nix"             "$dir"
+      # The nix shell's pre-commit hooks point at these two configs.
+      cp "$src/.stylish-haskell.yaml" "$dir"
+      cp "$src/.hlint.yaml"           "$dir"
+      cp "$src/readmes/$env.md"       "$dir/README.md"
       ;;
     docker)
       cp -r "$src/.devcontainer"  "$dir"
@@ -595,6 +627,7 @@ usage() {
   say "  --crypto-libs MODE  local | system | skip                  (with --env cabal)"
   say "  --prefix DIR        prefix for --crypto-libs system (default /usr/local)"
   say "  --dir NAME          project directory to create (default: my-plinth-project)"
+  say "  --repo OWNER/REPO   template repository on github.com (default: IntersectMBO/plinth-template)"
   say "  --from DIR          take the template from a local checkout (offline, CI)"
   say "  --ref REV           branch, tag or commit to download (default: HEAD)"
   say "  --help, -h          this text"
@@ -622,6 +655,8 @@ main() {
       --prefix=*) CRYPTO_PREFIX="${1#--prefix=}" ;;
       --dir) shift; TARGET_DIR="${1:?--dir needs an argument}" ;;
       --dir=*) TARGET_DIR="${1#--dir=}" ;;
+      --repo) shift; TEMPLATE_REPO="${1:?--repo needs an argument}" ;;
+      --repo=*) TEMPLATE_REPO="${1#--repo=}" ;;
       --from) shift; FROM_DIR="${1:?--from needs an argument}" ;;
       --from=*) FROM_DIR="${1#--from=}" ;;
       --ref) shift; TEMPLATE_REF="${1:?--ref needs an argument}" ;;
@@ -644,6 +679,15 @@ main() {
   case "$CRYPTO_MODE" in
     ''|local|system|skip) ;;
     *) die "invalid --crypto-libs '$CRYPTO_MODE' (valid: local, system, skip)" ;;
+  esac
+  # --repo: accept a full GitHub URL and reduce it to the OWNER/REPO form
+  # codeload.github.com wants.
+  TEMPLATE_REPO="${TEMPLATE_REPO#https://github.com/}"
+  TEMPLATE_REPO="${TEMPLATE_REPO%/}"
+  TEMPLATE_REPO="${TEMPLATE_REPO%.git}"
+  case "$TEMPLATE_REPO" in
+    *?/?*) ;;
+    *) die "invalid --repo '$TEMPLATE_REPO' (expected OWNER/REPO, e.g. IntersectMBO/plinth-template)" ;;
   esac
 
   detect_platform
@@ -670,6 +714,29 @@ main() {
     CRYPTO_MODE="$(select_crypto_mode)"
   fi
 
+  # Ask everything up front: no question may fire after files have started
+  # to be created (install_crypto_libs used to prompt for the prefix after
+  # create_project).
+  if [ "$ENV_CHOICE" = cabal ] && [ "$CRYPTO_MODE" = system ] && [ -z "$CRYPTO_PREFIX" ]; then
+    CRYPTO_PREFIX="$(ask "Install prefix" "/usr/local")"
+  fi
+
+  # A quoted "~" is not expanded by the caller's shell, and a relative
+  # prefix (or, under sudo, root's HOME) would point somewhere unintended:
+  # normalize once here. The value flows into the writability probe, the
+  # get-crypto-libs.sh --prefix argument and the exports next_steps prints.
+  if [ -n "$CRYPTO_PREFIX" ]; then
+    # shellcheck disable=SC2088 # matching a LITERAL ~ the shell didn't expand
+    case "$CRYPTO_PREFIX" in
+      "~") CRYPTO_PREFIX="$HOME" ;;
+      "~/"*) CRYPTO_PREFIX="$HOME/${CRYPTO_PREFIX#"~"/}" ;;
+    esac
+    case "$CRYPTO_PREFIX" in
+      /*) ;;
+      *) CRYPTO_PREFIX="$(pwd)/$CRYPTO_PREFIX" ;;
+    esac
+  fi
+
   say ""
   info "Checking prerequisites for the '$ENV_CHOICE' environment"
   say ""
@@ -678,7 +745,7 @@ main() {
     nix)     check_nix ;;
     docker)  check_docker "$DOCKER_MODE" ;;
     demeter) check_demeter ;;
-    cabal)   check_cabal_env ;;
+    cabal)   check_cabal_env "$CRYPTO_MODE" ;;
   esac
 
   if [ -z "$TARGET_DIR" ]; then

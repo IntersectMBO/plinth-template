@@ -41,6 +41,28 @@ RELEASE_TAG="v3.1"
 IOHK_NIX_COMMIT="bfdd1c3c12829d26a0e9a44f474d2adba45bf6c0"
 COMMIT_SHA_ASSET_SHA256="a82bb754e8566a8c0e7814a429200d064420bed3de3a6a6a1458366a1402e2f6"
 
+# Updating the pinned release (maintainers):
+#   1. Pick the new tag from https://github.com/input-output-hk/iohk-nix/releases
+#   2. Download and hash every asset; this loop prints lines in the ASSETS_*
+#      table format below, plus the new IOHK_NIX_COMMIT value (the printed
+#      "COMMIT_SHA <sha256>" line is the new COMMIT_SHA_ASSET_SHA256):
+#        TAG=vX.Y
+#        BASE="https://github.com/input-output-hk/iohk-nix/releases/download/$TAG"
+#        cd "$(mktemp -d)"
+#        for a in COMMIT_SHA \
+#                 arm64-macos.{libsodium,libsecp256k1,libblst}.pkg \
+#                 x86_64-macos.{libsodium,libsecp256k1,libblst}.pkg \
+#                 debian.{libsodium,libsecp256k1,libblst}.deb; do
+#          curl -fsSL -O "$BASE/$a" && printf '%s %s\n' "$a" "$(shasum -a 256 "$a" | awk '{print $1}')"
+#        done && echo "IOHK_NIX_COMMIT=$(cat COMMIT_SHA)"
+#   3. Update RELEASE_TAG, IOHK_NIX_COMMIT, COMMIT_SHA_ASSET_SHA256 and the
+#      three ASSETS_* tables below from that output.
+#   4. Optionally keep the nix side close: cd template && nix flake update iohk-nix.
+#      Exact commit equality between this pin and template/flake.lock is NOT
+#      required or expected — the blueprint parity check is the arbiter.
+#   5. Validate: dispatch the blueprint-parity workflow (or run
+#      .github/ci/test-blueprint-parity.sh) and run .github/ci/test-install.sh.
+
 BASE_URL="https://github.com/input-output-hk/iohk-nix/releases/download/${RELEASE_TAG}"
 
 # Per-platform assets and their pinned sha256 digests (from the GitHub release).
@@ -162,7 +184,11 @@ if [ -z "$PLATFORM" ]; then
   case "$(uname -s)-$(uname -m)" in
     Darwin-arm64)  PLATFORM="arm64-macos" ;;
     Darwin-x86_64) PLATFORM="x86_64-macos" ;;
-    Linux-*)       PLATFORM="debian" ;;
+    Linux-x86_64)  PLATFORM="debian" ;;
+    Linux-*)
+      die "no prebuilt libraries exist for $(uname -m) Linux: the pinned iohk-nix release only ships x86_64 Linux (.deb) and macOS binaries.
+Use the Nix development environment instead (it builds the libraries from source), or install libsodium (VRF-patched), libsecp256k1 and libblst yourself.
+(--platform debian would only work under x86_64 emulation.)" ;;
     MINGW*|MSYS*|CYGWIN*)
       die "native Windows is not supported: plutus-tx-plugin declares 'buildable: False' there, so the template cannot build even with these libraries installed.
 Install WSL2 (https://learn.microsoft.com/windows/wsl/install) and run this from your WSL shell." ;;

@@ -148,8 +148,8 @@ run_ghcup_scenario() {
   case "$(uname -s)-$(uname -m)" in
     Darwin-arm64)  platform="arm64-macos" ;;
     Darwin-x86_64) platform="x86_64-macos" ;;
-    Linux-*)       platform="debian" ;;
-    *) fail "unsupported platform for the ghcup scenario" ;;
+    Linux-x86_64)  platform="debian" ;;
+    *) fail "unsupported platform for the ghcup scenario ($(uname -s)-$(uname -m)): prebuilt crypto libs exist only for x86_64 Linux and macOS" ;;
   esac
   local prefix="$ROOT/dist-newstyle/crypto-libs/$platform"
   local pcdir="$prefix/lib/pkgconfig"
@@ -204,6 +204,11 @@ run_ghcup_scenario() {
                LD_LIBRARY_PATH="$real_prefix/lib"
                cabal --store-dir="$STORE_DIR")
   local flags=(-w "ghc-$ghc_version" --builddir="$builddir")
+
+  # A fresh machine has no hackage/CHaP package index yet; cabal exits with
+  # "The package list for 'cardano-haskell-packages' does not exist" instead
+  # of fetching it (same reason build-ghc-cabal.sh updates first).
+  "${cabal[@]}" update
 
   "${cabal[@]}" build "${flags[@]}" exe:gen-auction-validator-blueprint
   rm -f "$out"
@@ -277,10 +282,19 @@ inner_nix() {
   assert_prefix "$scenario: cabal" "/nix/store/" "$cabal_path"
   assert_eq "$scenario: ghc version" "$ghc_version" "$(ghc --numeric-version)"
 
-  # 3. Build and run.
+  # 3. Build and run. CABAL_STORE_DIR (optional) redirects the cabal store,
+  #    mirroring build-nix.sh, so CI can cache it between runs.
+  local cabal=(cabal)
+  if [ -n "${CABAL_STORE_DIR:-}" ]; then
+    cabal+=(--store-dir="$CABAL_STORE_DIR")
+  fi
+  # A fresh machine has no hackage/CHaP package index yet; cabal exits with
+  # "The package list for 'cardano-haskell-packages' does not exist" instead
+  # of fetching it (same reason build-ghc-cabal.sh updates first).
+  "${cabal[@]}" update
   rm -f "$out"
-  cabal build --builddir="$builddir" exe:gen-auction-validator-blueprint
-  cabal run -v0 --builddir="$builddir" exe:gen-auction-validator-blueprint -- "$out"
+  "${cabal[@]}" build --builddir="$builddir" exe:gen-auction-validator-blueprint
+  "${cabal[@]}" run -v0 --builddir="$builddir" exe:gen-auction-validator-blueprint -- "$out"
   if [ ! -s "$out" ]; then
     fail "$scenario: blueprint file was not produced"
   fi
@@ -294,7 +308,7 @@ inner_nix() {
   #    which case they don't show up at all — what must NEVER show up is a
   #    crypto lib from outside the nix store.)
   local bin libs crypto_libs
-  bin="$(cabal list-bin --builddir="$builddir" exe:gen-auction-validator-blueprint)"
+  bin="$("${cabal[@]}" list-bin --builddir="$builddir" exe:gen-auction-validator-blueprint)"
   libs="$(linked_libs "$bin")"
   crypto_libs="$(echo "$libs" | grep -iE 'sodium|secp256k1|blst' || true)"
   if [ -n "$crypto_libs" ]; then
@@ -346,6 +360,14 @@ compare_outputs() {
     fi
     echo "  $(shasum -a 256 "$f" 2>/dev/null || sha256sum "$f")"
   done
+  echo
+  # Provenance note: the release pin and the flake.lock rev may differ (the
+  # release is a frozen tag, flake.lock tracks head); the byte comparison
+  # below is what actually matters, so this is informational only.
+  local pin_rev lock_rev
+  pin_rev="$(sed -n 's/^IOHK_NIX_COMMIT="\(.*\)"$/\1/p' "$ROOT/get-crypto-libs.sh")"
+  lock_rev="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["nodes"]["iohk-nix"]["locked"]["rev"])' "$TEMPLATE/flake.lock")"
+  echo "  [info] crypto libs provenance: release pin iohk-nix@${pin_rev} vs flake.lock iohk-nix@${lock_rev}"
   echo
   # Environment parity: the same compiler must produce the same output
   # whether it comes from ghcup (with the downloaded crypto libs) or from

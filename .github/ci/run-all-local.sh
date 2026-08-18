@@ -5,6 +5,7 @@
 #
 #   .github/ci/run-all-local.sh              # everything
 #   PLINTH_SKIP_HEAVY=1 .github/ci/run-all-local.sh   # fast checks only
+#   PLINTH_RUN_PARITY=1 .github/ci/run-all-local.sh   # + blueprint parity
 #
 # The heavy steps compile the project; to speed up repeated ghc-cabal runs,
 # point CABAL_STORE_DIR at a persistent directory.
@@ -43,9 +44,10 @@ run_step "lint"         .github/ci/lint.sh
 run_step "test-install" .github/ci/test-install.sh
 
 if [ "${PLINTH_SKIP_HEAVY:-0}" = 1 ]; then
-  skip_step "build-ghc-cabal" "PLINTH_SKIP_HEAVY=1"
-  skip_step "build-nix"       "PLINTH_SKIP_HEAVY=1"
-  skip_step "build-docker"    "PLINTH_SKIP_HEAVY=1"
+  skip_step "build-ghc-cabal"    "PLINTH_SKIP_HEAVY=1"
+  skip_step "build-nix"          "PLINTH_SKIP_HEAVY=1"
+  skip_step "build-docker"       "PLINTH_SKIP_HEAVY=1"
+  skip_step "blueprint-parity"   "PLINTH_SKIP_HEAVY=1"
 else
   if command -v ghc >/dev/null 2>&1 && command -v cabal >/dev/null 2>&1; then
     run_step "build-ghc-cabal (local crypto libs)" \
@@ -62,6 +64,13 @@ else
   fi
   # build-docker.sh skips by itself when docker is unavailable
   run_step "build-docker" .github/ci/build-docker.sh
+  # Four full builds (ghcup ghc 9.6.7 + 9.12.2, nix ghc96 + ghc912): opt-in.
+  # In CI this runs from its own weekly workflow (blueprint-parity.yaml).
+  if [ "${PLINTH_RUN_PARITY:-0}" = 1 ]; then
+    run_step "blueprint-parity" .github/ci/test-blueprint-parity.sh
+  else
+    skip_step "blueprint-parity" "opt-in: PLINTH_RUN_PARITY=1 (needs ghcup ghc 9.6.7 + 9.12.2, cabal, nix, pkg-config, python3)"
+  fi
 fi
 
 echo ""

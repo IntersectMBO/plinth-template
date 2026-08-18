@@ -20,8 +20,10 @@ environment needs:
 | Demeter      | just a browser (hosted; nix inside)         | sources + nix files            |
 | GHC + Cabal  | ghcup with GHC 9.6/9.12, cabal, pkg-config  | sources + get-crypto-libs.sh   |
 
-Each project comes with a README covering just that setup. You can also skip
-the installer entirely: every project is a subset of the
+Each project comes with a README covering just that setup, plus `.gitignore`,
+`LICENSE.md` and `NOTICE.md` (Nix and Demeter projects also carry the
+hlint/stylish-haskell configs the shell's pre-commit hooks point at). You can
+also skip the installer entirely: every project is a subset of the
 [template/](template) directory, so copying it (plus
 [get-crypto-libs.sh](get-crypto-libs.sh) for the GHC+Cabal setup) works too.
 
@@ -61,6 +63,7 @@ system-wide instead) and the GHC+Cabal README
   ```
   .github/ci/run-all-local.sh                     # everything
   PLINTH_SKIP_HEAVY=1 .github/ci/run-all-local.sh # fast checks only
+  PLINTH_RUN_PARITY=1 .github/ci/run-all-local.sh # + blueprint parity
   ```
 
   | Script                     | Checks                                             | Workflow                 |
@@ -72,10 +75,14 @@ system-wide instead) and the GHC+Cabal README
   | `build-nix.sh`             | full build of an installed Nix project (= Demeter) | `ci.yaml`                |
   | `build-docker.sh`          | full build inside the devx devcontainer image      | `ci.yaml`                |
   | `bump-plutus-version.sh`   | bumps plutus + index-states in template/           | `bump-plutus-version.yml`|
-  | `test-blueprint-parity.sh` | blueprint byte-parity between ghcup and nix        | (manual)                 |
+  | `test-blueprint-parity.sh` | blueprint byte-parity between ghcup and nix        | `blueprint-parity.yaml`  |
 
   [ci.yaml](.github/workflows/ci.yaml) runs all of its jobs in parallel on
   every pull request — no path filters, everything is rebuilt and retested.
+  The one exception is
+  [blueprint-parity.yaml](.github/workflows/blueprint-parity.yaml): four full
+  builds are too heavy per PR, so it runs weekly and on demand
+  (`gh workflow run` or `PLINTH_RUN_PARITY=1 .github/ci/run-all-local.sh`).
   There is deliberately no native-Windows job: `plutus-tx-plugin` declares
   `buildable: False` on Windows, so Plinth projects only work there through
   WSL2 (covered by the Linux jobs).
