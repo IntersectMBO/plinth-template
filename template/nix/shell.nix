@@ -2,21 +2,21 @@
 
 let
 
-  allTools = {
-    "ghc966".cabal                   = project.projectVariants.ghc966.tool "cabal" "latest";
-    "ghc966".cabal-fmt               = project.projectVariants.ghc966.tool "cabal-fmt" "latest";
-    "ghc966".haskell-language-server = project.projectVariants.ghc966.tool "haskell-language-server" "latest";
-    "ghc966".stylish-haskell         = project.projectVariants.ghc966.tool "stylish-haskell" "latest";
-    "ghc966".fourmolu                = project.projectVariants.ghc966.tool "fourmolu" "latest";
-    "ghc966".hlint                   = project.projectVariants.ghc966.tool "hlint" "latest";
-  };
+  variant = project.projectVariants.${ghc};
 
-  tools = allTools.${ghc};
+  tools = {
+    cabal                   = variant.tool "cabal" "latest";
+    haskell-language-server = variant.tool "haskell-language-server" "latest";
+    cabal-fmt               = project.tool "cabal-fmt" "latest";
+    stylish-haskell         = project.tool "stylish-haskell" "latest";
+    fourmolu                = project.tool "fourmolu" "latest";
+    hlint                   = project.tool "hlint" "latest";
+  };
 
   preCommitCheck = inputs.pre-commit-hooks.lib.${pkgs.system}.run {
 
     src = lib.cleanSources ../.;
-    
+
     hooks = {
       shellcheck = {
         enable = false;
@@ -76,8 +76,8 @@ let
     pkgs.which
   ];
 
-  shell = project.shellFor {
-    name = "plinth-${project.args.compiler-nix-name}";
+  shell = variant.shellFor {
+    name = "plinth-${variant.args.compiler-nix-name}";
 
     buildInputs = lib.concatLists [
       commonPkgs

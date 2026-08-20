@@ -11,15 +11,17 @@ let
 
   mkShell = ghc: import ./shell.nix { inherit inputs pkgs lib project utils ghc; };
 
-  devShells.default = mkShell "ghc966"; 
+  devShells.default = mkShell "ghc96";
+  devShells.ghc96 = mkShell "ghc96";
+  devShells.ghc912 = mkShell "ghc912";
 
   projectFlake = project.flake {};
 
-  defaultHydraJobs = { 
-    ghc966 = projectFlake.hydraJobs.ghc966;
-    inherit packages; 
+  defaultHydraJobs = {
+    ghc96 = projectFlake.hydraJobs.ghc96;
+    inherit packages;
     inherit devShells;
-    required = utils.makeHydraRequiredJob hydraJobs; 
+    required = utils.makeHydraRequiredJob hydraJobs;
   };
 
   hydraJobsPerSystem = {

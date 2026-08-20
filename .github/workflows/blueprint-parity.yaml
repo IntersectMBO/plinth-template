@@ -1,0 +1,157 @@
+# Blueprint parity: the one check too heavy to run on every pull request
+# (four full builds of the template). It proves that the ghcup toolchain with
+# the downloaded crypto libraries and the nix shells produce byte-identical
+# blueprints — the drift detector between get-crypto-libs.sh's pinned release
+# and template/flake.lock's iohk-nix rev. Runs weekly (three hours after
+# ci.yaml's Monday run, so the caches this workflow restores were refreshed
+# the same morning) and on demand:
+#
+#   gh workflow run "Blueprint parity" --ref <branch>
+#
+# Each scenario runs in its own matrix leg and uploads its blueprint as an
+# artifact; the compare job downloads all four and byte-compares them
+# (test-blueprint-parity.sh's `compare` mode only reads
+# dist-newstyle/test/blueprints/*.json).
+name: Blueprint parity
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 7 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: blueprint-parity-${{ github.ref }}
+
+jobs:
+  scenario:
+    name: ${{ matrix.scenario }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        # scenario names must match test-blueprint-parity.sh's case arms
+        # (they are also the blueprint file names).
+        include:
+          - scenario: ghcup-ghc967
+            kind: ghcup
+            ghc: "9.6.7"
+          - scenario: ghcup-ghc9122
+            kind: ghcup
+            ghc: "9.12.2"
+          - scenario: nix-ghc96
+            kind: nix
+            shell: ghc96
+          - scenario: nix-ghc912
+            kind: nix
+            shell: ghc912
+    steps:
+      - uses: actions/checkout@v4
+
+      # --- ghcup scenarios -------------------------------------------------
+      # test-blueprint-parity.sh asserts ghc/cabal resolve under
+      # $HOME/.ghcup/bin. haskell-actions/setup is deliberately NOT used: on
+      # GitHub's runners it reuses the image's ghcup, which installs under
+      # /usr/local/.ghcup (GHCUP_INSTALL_BASE_PREFIX=/usr/local).
+      - name: Cache ghcup
+        if: matrix.kind == 'ghcup'
+        uses: actions/cache@v4
+        with:
+          path: ~/.ghcup
+          key: parity-ghcup-v1-${{ runner.os }}-${{ matrix.ghc }}
+
+      - name: Install ghc ${{ matrix.ghc }} + cabal into $HOME/.ghcup
+        if: matrix.kind == 'ghcup'
+        run: |
+          if [ ! -x "$HOME/.ghcup/bin/ghcup" ]; then
+            # The image may pre-link ~/.ghcup to its /usr/local install.
+            rm -rf "$HOME/.ghcup"
+            curl --proto '=https' --tlsv1.2 -sSf https://get-ghcup.haskell.org \
+              | GHCUP_INSTALL_BASE_PREFIX="$HOME" BOOTSTRAP_HASKELL_NONINTERACTIVE=1 \
+                BOOTSTRAP_HASKELL_MINIMAL=1 sh
+          fi
+          "$HOME/.ghcup/bin/ghcup" install ghc ${{ matrix.ghc }}
+          "$HOME/.ghcup/bin/ghcup" install cabal latest --set
+
+      - name: Cache the downloaded crypto libs
+        if: matrix.kind == 'ghcup'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/plinth-crypto-libs
+          key: parity-crypto-v1-${{ runner.os }}-${{ hashFiles('get-crypto-libs.sh') }}
+
+      - name: Cache cabal store (ghcup)
+        if: matrix.kind == 'ghcup'
+        uses: actions/cache@v4
+        with:
+          path: |
+            dist-newstyle/test/store
+            ~/.cabal/packages
+            ~/.cache/cabal/packages
+          key: parity-cabal-v1-${{ runner.os }}-${{ matrix.scenario }}-${{ hashFiles('template/cabal.project') }}
+          restore-keys: |
+            parity-cabal-v1-${{ runner.os }}-${{ matrix.scenario }}-
+
+      # --- nix scenarios ---------------------------------------------------
+      # Installer, nix_conf and cache keys are identical to ci.yaml's
+      # build-nix job, so these legs reuse the snapshots that job refreshes
+      # on every pull request.
+      - uses: nixbuild/nix-quick-install-action@v29
+        if: matrix.kind == 'nix'
+        with:
+          nix_conf: |
+            extra-substituters = https://cache.iog.io
+            extra-trusted-public-keys = hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ=
+            accept-flake-config = true
+
+      - name: Cache the /nix store
+        if: matrix.kind == 'nix'
+        uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: nix-store-${{ runner.os }}-${{ matrix.shell }}-${{ hashFiles('template/flake.nix', 'template/flake.lock', 'template/nix/**') }}
+          restore-prefixes-first-match: nix-store-${{ runner.os }}-${{ matrix.shell }}-
+          gc-max-store-size-linux: 5G
+
+      - name: Cache cabal store (nix)
+        if: matrix.kind == 'nix'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.ci-cabal-store
+            ~/.cabal/packages
+            ~/.cache/cabal/packages
+          key: nix-cabal-${{ runner.os }}-${{ matrix.shell }}-${{ hashFiles('template/cabal.project') }}
+          restore-keys: |
+            nix-cabal-${{ runner.os }}-${{ matrix.shell }}-
+
+      - name: Run scenario
+        run: |
+          if [ "${{ matrix.kind }}" = nix ]; then
+            export CABAL_STORE_DIR="$HOME/.ci-cabal-store"
+          fi
+          .github/ci/test-blueprint-parity.sh ${{ matrix.scenario }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: blueprint-${{ matrix.scenario }}
+          path: dist-newstyle/test/blueprints/${{ matrix.scenario }}.json
+          if-no-files-found: error
+          retention-days: 7
+
+  compare:
+    name: compare
+    needs: scenario
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: blueprint-*
+          merge-multiple: true
+          path: dist-newstyle/test/blueprints
+
+      - run: .github/ci/test-blueprint-parity.sh compare

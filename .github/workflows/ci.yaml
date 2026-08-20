@@ -1,0 +1,159 @@
+# The single CI workflow: everything is rebuilt and retested on every pull
+# request (no path filters — the repository is small and the jobs run in
+# parallel), on pushes to main, on demand, and once a week to catch upstream
+# drift (toolchains, the devx image, the binary caches).
+#
+# The one exception is blueprint-parity.yaml: the ghcup-vs-nix blueprint
+# parity check means four full builds — too heavy per PR — so it runs weekly
+# and on demand from its own workflow.
+#
+# Every job is a thin wrapper around a script in .github/ci/, so the same
+# checks run locally: see .github/ci/run-all-local.sh.
+#
+# There is no native-Windows job on purpose: plutus-tx-plugin declares
+# `buildable: False` on Windows (see its os-support stanza), so no Plinth
+# project can build there. Windows users go through WSL2 (which the Linux
+# jobs cover); install.sh enforces this.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 4 * * 1"
+
+# Every job only ever reads the repository; nothing here writes to it.
+permissions:
+  contents: read
+
+# Superseded pushes to a pull request are worth cancelling; runs on main are
+# not. github.event_name is part of the group because push, schedule and
+# workflow_dispatch on main all resolve github.ref to refs/heads/main, so a
+# single group would let a merge cancel the weekly drift check (which reports
+# nothing when cancelled) and the cron cancel a merge commit's CI.
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  lint:
+    name: Lint shell scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: .github/ci/lint.sh
+
+  test-install:
+    name: install.sh (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      # Runners have no nix; install it on the Linux leg so test-install.sh
+      # also exercises install.sh's `--env nix` happy path.
+      - uses: DeterminateSystems/nix-installer-action@v16
+        if: runner.os == 'Linux'
+
+      - run: .github/ci/test-install.sh
+
+  build-cabal:
+    name: ghc-cabal project (ghc ${{ matrix.ghc }}, ${{ matrix.crypto }} crypto libs, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        ghc: ["9.6.7", "9.12.2"]
+        crypto: [local, system]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: haskell-actions/setup@v2
+        id: setup
+        with:
+          ghc-version: ${{ matrix.ghc }}
+          cabal-version: latest
+
+      - name: Ensure pkg-config (macOS)
+        if: runner.os == 'macOS'
+        run: command -v pkg-config || brew install pkgconf
+
+      # The crypto mode is part of the key: the store contains packages built
+      # against the libraries' install paths, which differ between the
+      # per-user cache (local) and the throwaway --prefix (system).
+      - name: Cache cabal store
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ steps.setup.outputs.cabal-store }}
+            ~/.cabal/packages
+            ~/.cache/cabal/packages
+          # The v2 salt invalidates stores built when the system-mode crypto
+          # prefix was a per-run temp dir: cabal baked that path into the
+          # packages it compiled, so restoring such a store fails to link
+          # (`ld: cannot find -lsodium`). Bump it whenever the crypto
+          # libraries' install location changes.
+          key: crypto-cabal-v2-${{ runner.os }}-${{ matrix.ghc }}-${{ matrix.crypto }}-${{ hashFiles('template/cabal.project') }}
+          restore-keys: |
+            crypto-cabal-v2-${{ runner.os }}-${{ matrix.ghc }}-${{ matrix.crypto }}-
+
+      - run: .github/ci/build-ghc-cabal.sh --crypto-libs ${{ matrix.crypto }}
+
+  build-nix:
+    name: nix project (nix develop .#${{ matrix.shell }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shell: [ghc96, ghc912]
+    steps:
+      - uses: actions/checkout@v4
+
+      # Single-user nix (no daemon, store owned by the runner user) so
+      # cache-nix-action below can snapshot and restore /nix directly.
+      - uses: nixbuild/nix-quick-install-action@v29
+        with:
+          nix_conf: |
+            extra-substituters = https://cache.iog.io
+            extra-trusted-public-keys = hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ=
+            accept-flake-config = true
+
+      # The devshell closure (GHC + tooling, several GB) otherwise gets
+      # re-downloaded from cache.iog.io on every run. gc-max-store-size keeps
+      # the saved snapshot within the repo's 10 GB Actions cache quota.
+      - name: Cache the /nix store
+        uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: nix-store-${{ runner.os }}-${{ matrix.shell }}-${{ hashFiles('template/flake.nix', 'template/flake.lock', 'template/nix/**') }}
+          restore-prefixes-first-match: nix-store-${{ runner.os }}-${{ matrix.shell }}-
+          gc-max-store-size-linux: 5G
+
+      # The dependencies cabal compiles inside the shell (plutus and friends)
+      # dominate this job's wall clock; keep the store across runs.
+      - name: Cache cabal store
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.ci-cabal-store
+            ~/.cabal/packages
+            ~/.cache/cabal/packages
+          key: nix-cabal-${{ runner.os }}-${{ matrix.shell }}-${{ hashFiles('template/cabal.project') }}
+          restore-keys: |
+            nix-cabal-${{ runner.os }}-${{ matrix.shell }}-
+
+      - run: CABAL_STORE_DIR="$HOME/.ci-cabal-store" .github/ci/build-nix.sh --shell ${{ matrix.shell }}
+
+  build-docker:
+    name: docker project (devx devcontainer)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: .github/ci/build-docker.sh
+        env:
+          PLINTH_REQUIRE_DOCKER: "1"
