@@ -5,11 +5,11 @@ import GHC.Generics (Generic)
 import PlutusCore.Version (plcVersion110)
 import PlutusLedgerApi.V3 (CurrencySymbol, Datum (..), Lovelace, OutputDatum (..), 
                            POSIXTime, PubKeyHash, ScriptContext (..), TokenName, TxInfo (..), 
-                           TxOut (..), from, to, ScriptInfo (..), Redeemer (..), getRedeemer)
+                           TxOut (..), from, to, ScriptInfo (..), Redeemer (..), getRedeemer,
+                           lovelaceValueOf, valueOf)
 import PlutusLedgerApi.V3.Contexts (getContinuingOutputs)
 import PlutusLedgerApi.V1.Address (toPubKeyHash)
 import PlutusLedgerApi.V1.Interval (contains)
-import PlutusLedgerApi.V1.Value (lovelaceValueOf, valueOf)
 import PlutusTx
 import PlutusTx.AsData qualified as PlutusTx
 import PlutusTx.Blueprint
