@@ -173,6 +173,11 @@ fi
 note "running cabal update"
 for attempt in 1 2 3; do "${cabal[@]}" update && break; if [ "$attempt" = 3 ]; then fail "cabal update failed 3 times"; fi; echo "cabal update failed (attempt $attempt/3); retrying in 20s" >&2; sleep 20; done
 
+# Fetch every source tarball first, retried: CHaP and hackage mirrors answer
+# 503 for a moment now and then (basement-0.0.16, 2026-11-26).
+note "downloading package sources"
+for attempt in 1 2 3; do "${cabal[@]}" build all --only-download && break; if [ "$attempt" = 3 ]; then fail "package download failed 3 times"; fi; echo "package download failed (attempt $attempt/3); retrying in 20s" >&2; sleep 20; done
+
 note "building (cabal build all)..."
 "${cabal[@]}" build all
 

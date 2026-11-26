@@ -105,6 +105,9 @@ if ! nix develop "path:$PROJECT#$SHELL_NAME" --accept-flake-config --command bas
        note "running cabal update (retried: hackage mirrors fail transiently)"
        for attempt in 1 2 3; do "${cabal[@]}" update && break; if [ "$attempt" = 3 ]; then echo "build-nix(shell): FAIL: cabal update failed 3 times" >&2; exit 1; fi; echo "cabal update failed (attempt $attempt/3); retrying in 20s" >&2; sleep 20; done
 
+       note "downloading package sources (retried: mirrors answer 503 transiently)"
+       for attempt in 1 2 3; do "${cabal[@]}" build all --only-download && break; if [ "$attempt" = 3 ]; then echo "build-nix(shell): FAIL: package download failed 3 times" >&2; exit 1; fi; echo "package download failed (attempt $attempt/3); retrying in 20s" >&2; sleep 20; done
+
        note "building (cabal build all)..."
        "${cabal[@]}" build all
        "${cabal[@]}" run -v0 exe:gen-auction-validator-blueprint -- blueprint.json
