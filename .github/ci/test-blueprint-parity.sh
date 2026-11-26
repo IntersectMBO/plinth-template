@@ -105,10 +105,13 @@ $3" ;;
 }
 
 linked_libs() {
-  # Print the dynamic libraries an executable links against.
+  # Print the dynamic libraries an executable links against. On Linux a
+  # library the loader cannot find shows up as "<soname> => not found"; print
+  # it as "NOT-FOUND:<soname>" so the failure names the library instead of
+  # reading "not".
   case "$(uname -s)" in
     Darwin) /usr/bin/otool -L "$1" | tail -n +2 | awk '{print $1}' ;;
-    Linux)  ldd "$1" | awk '{print $3}' ;;
+    Linux)  ldd "$1" | awk '$3 == "not" {print "NOT-FOUND:" $1; next} {print $3}' ;;
   esac
 }
 
@@ -208,7 +211,7 @@ run_ghcup_scenario() {
   # A fresh machine has no hackage/CHaP package index yet; cabal exits with
   # "The package list for 'cardano-haskell-packages' does not exist" instead
   # of fetching it (same reason build-ghc-cabal.sh updates first).
-  "${cabal[@]}" update
+  for attempt in 1 2 3; do "${cabal[@]}" update && break; if [ "$attempt" = 3 ]; then fail "$scenario: cabal update failed 3 times"; fi; echo "cabal update failed (attempt $attempt/3); retrying in 20s" >&2; sleep 20; done
 
   "${cabal[@]}" build "${flags[@]}" exe:gen-auction-validator-blueprint
   rm -f "$out"
@@ -225,7 +228,11 @@ run_ghcup_scenario() {
   #    cache (through which the shim serves them) and nowhere else.
   local bin libs
   bin="$("${cabal[@]}" list-bin "${flags[@]}" exe:gen-auction-validator-blueprint)"
-  libs="$(linked_libs "$bin")"
+  # ldd resolves through the loader's search path, so it needs the same
+  # LD_LIBRARY_PATH the build and run used (see step 3); without it every
+  # crypto library reads "not found" on Linux.
+  libs="$(LD_LIBRARY_PATH="$real_prefix/lib" linked_libs "$bin")"
+  assert_not_contains "$scenario: linked libs" "NOT-FOUND:" "$libs"
   assert_contains "$scenario: linked libsodium" "$real_prefix/lib/libsodium" "$libs"
   assert_contains "$scenario: linked libsecp256k1" "$real_prefix/lib/libsecp256k1" "$libs"
   assert_not_contains "$scenario: linked libs" "/nix/store" "$libs"
@@ -291,7 +298,7 @@ inner_nix() {
   # A fresh machine has no hackage/CHaP package index yet; cabal exits with
   # "The package list for 'cardano-haskell-packages' does not exist" instead
   # of fetching it (same reason build-ghc-cabal.sh updates first).
-  "${cabal[@]}" update
+  for attempt in 1 2 3; do "${cabal[@]}" update && break; if [ "$attempt" = 3 ]; then fail "$scenario: cabal update failed 3 times"; fi; echo "cabal update failed (attempt $attempt/3); retrying in 20s" >&2; sleep 20; done
   rm -f "$out"
   "${cabal[@]}" build --builddir="$builddir" exe:gen-auction-validator-blueprint
   "${cabal[@]}" run -v0 --builddir="$builddir" exe:gen-auction-validator-blueprint -- "$out"

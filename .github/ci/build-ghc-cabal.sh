@@ -168,8 +168,10 @@ fi
 # already built a CHaP project, and cabal never fetches it on its own. Gating
 # this on $CI made local runs (run-all-local.sh) die in `cabal build all` with
 # "The package list for 'cardano-haskell-packages' does not exist."
+# Retried: a hackage mirror answering 403/5xx for a moment has failed whole
+# jobs before (timestamp.json, 2026-09-21).
 note "running cabal update"
-"${cabal[@]}" update
+for attempt in 1 2 3; do "${cabal[@]}" update && break; if [ "$attempt" = 3 ]; then fail "cabal update failed 3 times"; fi; echo "cabal update failed (attempt $attempt/3); retrying in 20s" >&2; sleep 20; done
 
 note "building (cabal build all)..."
 "${cabal[@]}" build all
