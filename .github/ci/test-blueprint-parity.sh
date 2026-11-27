@@ -108,7 +108,7 @@ linked_libs() {
   # Print the dynamic libraries an executable links against.
   case "$(uname -s)" in
     Darwin) /usr/bin/otool -L "$1" | tail -n +2 | awk '{print $1}' ;;
-    Linux)  ldd "$1" | awk '{print $3}' ;;
+    Linux)  ldd "$1" | awk '$3 == "not" {print "NOT-FOUND:" $1; next} {print $3}' ;;
   esac
 }
 
@@ -225,7 +225,8 @@ run_ghcup_scenario() {
   #    cache (through which the shim serves them) and nowhere else.
   local bin libs
   bin="$("${cabal[@]}" list-bin "${flags[@]}" exe:gen-auction-validator-blueprint)"
-  libs="$(linked_libs "$bin")"
+  libs="$(LD_LIBRARY_PATH="$real_prefix/lib" linked_libs "$bin")"
+  assert_not_contains "$scenario: linked libs" "NOT-FOUND:" "$libs"
   assert_contains "$scenario: linked libsodium" "$real_prefix/lib/libsodium" "$libs"
   assert_contains "$scenario: linked libsecp256k1" "$real_prefix/lib/libsecp256k1" "$libs"
   assert_not_contains "$scenario: linked libs" "/nix/store" "$libs"

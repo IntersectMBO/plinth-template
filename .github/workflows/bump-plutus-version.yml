@@ -27,6 +27,26 @@ jobs:
           PLUTUS_VERSION: ${{ github.event.inputs.version }}
         run: .github/ci/bump-plutus-version.sh "$PLUTUS_VERSION"
 
+      - uses: haskell-actions/setup@v2
+        id: setup
+        with:
+          ghc-version: "9.6.7"
+          cabal-version: latest
+
+      - name: Restore cabal store
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ${{ steps.setup.outputs.cabal-store }}
+            ~/.cabal/packages
+            ~/.cache/cabal/packages
+          key: crypto-cabal-v2-${{ runner.os }}-9.6.7-local-${{ hashFiles('template/cabal.project') }}
+          restore-keys: |
+            crypto-cabal-v2-${{ runner.os }}-9.6.7-local-
+
+      - name: Build the bumped template
+        run: .github/ci/build-ghc-cabal.sh --crypto-libs local
+
       - name: Create Pull Request
         id: cpr
         uses: peter-evans/create-pull-request@v6.0.5
