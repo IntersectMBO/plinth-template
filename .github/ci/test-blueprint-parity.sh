@@ -211,9 +211,8 @@ run_ghcup_scenario() {
   # A fresh machine has no hackage/CHaP package index yet; cabal exits with
   # "The package list for 'cardano-haskell-packages' does not exist" instead
   # of fetching it (same reason build-ghc-cabal.sh updates first).
-  for attempt in 1 2 3; do "${cabal[@]}" update && break; if [ "$attempt" = 3 ]; then fail "$scenario: cabal update failed 3 times"; fi; echo "cabal update failed (attempt $attempt/3); retrying in 20s" >&2; sleep 20; done
+  "${cabal[@]}" update
 
-  for attempt in 1 2 3; do "${cabal[@]}" build "${flags[@]}" --only-download exe:gen-auction-validator-blueprint && break; if [ "$attempt" = 3 ]; then fail "$scenario: package download failed 3 times"; fi; echo "package download failed (attempt $attempt/3); retrying in 20s" >&2; sleep 20; done
   "${cabal[@]}" build "${flags[@]}" exe:gen-auction-validator-blueprint
   rm -f "$out"
   "${cabal[@]}" run -v0 "${flags[@]}" exe:gen-auction-validator-blueprint -- "$out"
@@ -299,9 +298,8 @@ inner_nix() {
   # A fresh machine has no hackage/CHaP package index yet; cabal exits with
   # "The package list for 'cardano-haskell-packages' does not exist" instead
   # of fetching it (same reason build-ghc-cabal.sh updates first).
-  for attempt in 1 2 3; do "${cabal[@]}" update && break; if [ "$attempt" = 3 ]; then fail "$scenario: cabal update failed 3 times"; fi; echo "cabal update failed (attempt $attempt/3); retrying in 20s" >&2; sleep 20; done
+  "${cabal[@]}" update
   rm -f "$out"
-  for attempt in 1 2 3; do "${cabal[@]}" build --builddir="$builddir" --only-download exe:gen-auction-validator-blueprint && break; if [ "$attempt" = 3 ]; then fail "$scenario: package download failed 3 times"; fi; echo "package download failed (attempt $attempt/3); retrying in 20s" >&2; sleep 20; done
   "${cabal[@]}" build --builddir="$builddir" exe:gen-auction-validator-blueprint
   "${cabal[@]}" run -v0 --builddir="$builddir" exe:gen-auction-validator-blueprint -- "$out"
   if [ ! -s "$out" ]; then

@@ -61,40 +61,18 @@ CHAP_REV="$(python3 -c '
 import json
 print(json.load(open("flake.lock"))["nodes"]["CHaP"]["locked"]["rev"])
 ')"
-CHAP_INDEX="$(mktemp "${TMPDIR:-/tmp}/chap-index.XXXXXX")"
-trap 'rm -f "$CHAP_INDEX"' EXIT
-curl -fsSL -o "$CHAP_INDEX" \
+CHAP_DATE="$(curl -fsSL \
   "https://raw.githubusercontent.com/IntersectMBO/cardano-haskell-packages/${CHAP_REV}/01-index.tar.gz" \
-  || fail "failed to download the CHaP index at $CHAP_REV"
-CHAP_DATE="$(python3 - "$CHAP_INDEX" <<'EOF'
+  | python3 -c '
 import sys, tarfile, datetime
-tf = tarfile.open(sys.argv[1], mode="r:gz")
+tf = tarfile.open(fileobj=sys.stdin.buffer, mode="r:gz")
 print(datetime.datetime.fromtimestamp(max(m.mtime for m in tf),
                                       datetime.timezone.utc)
       .strftime("%Y-%m-%dT%H:%M:%SZ"))
-EOF
-)"
+')"
 if [ -z "$CHAP_DATE" ]; then
   fail "failed to determine the CHaP index-state"
 fi
-
-# Refuse to bump to a version the pinned CHaP does not have yet. plutus is
-# released to CHaP some time after its tag; bumping in between (as happened
-# with 1.71.0.0 and 1.72.0.0) writes bounds no index-state can satisfy and
-# breaks every build on main.
-MISSING="$(python3 - "$CHAP_INDEX" "$PLUTUS_VERSION" <<'EOF'
-import sys, tarfile
-names = {m.name for m in tarfile.open(sys.argv[1], mode="r:gz")}
-v = sys.argv[2]
-print(" ".join(f"{pkg}-{v}"
-               for pkg in ("plutus-core", "plutus-ledger-api", "plutus-tx", "plutus-tx-plugin")
-               if f"{pkg}/{v}/{pkg}.cabal" not in names))
-EOF
-)"
-if [ -n "$MISSING" ]; then
-  fail "not yet published to CHaP (rev $CHAP_REV): $MISSING. Wait for the CHaP release and run the bump again."
-fi
-note "CHaP has all plutus packages at $PLUTUS_VERSION"
 
 note "hackage index-state: $HACKAGE_DATE"
 note "CHaP index-state:    $CHAP_DATE"

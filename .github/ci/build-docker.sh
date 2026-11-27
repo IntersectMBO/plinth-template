@@ -87,8 +87,7 @@ if ! docker run --rm \
            exit 1
          fi
          echo "build-docker(container): crypto libs provided by the image (via nix)"
-         for attempt in 1 2 3; do cabal update && break; if [ "$attempt" = 3 ]; then echo "build-docker(container): FAIL: cabal update failed 3 times" >&2; exit 1; fi; echo "cabal update failed (attempt $attempt/3); retrying in 20s" >&2; sleep 20; done
-         for attempt in 1 2 3; do cabal build all --only-download && break; if [ "$attempt" = 3 ]; then echo "build-docker(container): FAIL: package download failed 3 times" >&2; exit 1; fi; echo "package download failed (attempt $attempt/3); retrying in 20s" >&2; sleep 20; done
+         cabal update
          cabal build all
          cabal run -v0 exe:gen-auction-validator-blueprint -- blueprint.json
          if [ ! -s blueprint.json ]; then
