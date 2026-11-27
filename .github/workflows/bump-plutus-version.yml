@@ -27,11 +27,6 @@ jobs:
           PLUTUS_VERSION: ${{ github.event.inputs.version }}
         run: .github/ci/bump-plutus-version.sh "$PLUTUS_VERSION"
 
-      # The pull request below is opened with GITHUB_TOKEN, which by design
-      # triggers no pull_request workflows: ci.yaml never runs on it, and
-      # auto-merge lands it immediately. So build the bumped template here,
-      # before the pull request exists. 1.71.0.0 and 1.72.0.0 were merged
-      # unbuilt and broke main for weeks.
       - uses: haskell-actions/setup@v2
         id: setup
         with:
@@ -45,7 +40,6 @@ jobs:
             ${{ steps.setup.outputs.cabal-store }}
             ~/.cabal/packages
             ~/.cache/cabal/packages
-          # Same key family as ci.yaml's build-cabal job (local crypto libs).
           key: crypto-cabal-v2-${{ runner.os }}-9.6.7-local-${{ hashFiles('template/cabal.project') }}
           restore-keys: |
             crypto-cabal-v2-${{ runner.os }}-9.6.7-local-

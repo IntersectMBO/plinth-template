@@ -105,10 +105,7 @@ $3" ;;
 }
 
 linked_libs() {
-  # Print the dynamic libraries an executable links against. On Linux a
-  # library the loader cannot find shows up as "<soname> => not found"; print
-  # it as "NOT-FOUND:<soname>" so the failure names the library instead of
-  # reading "not".
+  # Print the dynamic libraries an executable links against.
   case "$(uname -s)" in
     Darwin) /usr/bin/otool -L "$1" | tail -n +2 | awk '{print $1}' ;;
     Linux)  ldd "$1" | awk '$3 == "not" {print "NOT-FOUND:" $1; next} {print $3}' ;;
@@ -228,9 +225,6 @@ run_ghcup_scenario() {
   #    cache (through which the shim serves them) and nowhere else.
   local bin libs
   bin="$("${cabal[@]}" list-bin "${flags[@]}" exe:gen-auction-validator-blueprint)"
-  # ldd resolves through the loader's search path, so it needs the same
-  # LD_LIBRARY_PATH the build and run used (see step 3); without it every
-  # crypto library reads "not found" on Linux.
   libs="$(LD_LIBRARY_PATH="$real_prefix/lib" linked_libs "$bin")"
   assert_not_contains "$scenario: linked libs" "NOT-FOUND:" "$libs"
   assert_contains "$scenario: linked libsodium" "$real_prefix/lib/libsodium" "$libs"
